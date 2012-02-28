@@ -40,13 +40,13 @@ pairDataCon = DataCon {
     dataConTyConArgs = [a_ty, b_ty]
   } where ([a_tv, b_tv], [a_ty, b_ty]) = shadowyTyVarsTypes [("a", LiftedTypeKind), ("b", LiftedTypeKind)]
 
-unboxedPairDataCon :: DataCon
-unboxedPairDataCon = DataCon {
-    dataConName      = "(#,#)",
-    dataConBinders   = [ATyVar a_tv, ATyVar b_tv, AnId (typefulId a_ty), AnId (typefulId b_ty)],
-    dataConTyCon     = unboxedPairTyCon,
-    dataConTyConArgs = [a_ty, b_ty]
-  } where ([a_tv, b_tv], [a_ty, b_ty]) = shadowyTyVarsTypes [("a", OpenTypeKind), ("b", OpenTypeKind)]
+unboxedTupleDataCon :: Int -> DataCon
+unboxedTupleDataCon n = DataCon {
+    dataConName      = "(#" ++ replicate (n - 1) ',' ++ "#)",
+    dataConBinders   = map ATyVar tvs ++ map (AnId . typefulId) tys,
+    dataConTyCon     = unboxedTupleTyCon n,
+    dataConTyConArgs = tys
+  } where (tvs, tys) = shadowyTyVarsTypes [("a" ++ show n, OpenTypeKind) | n <- [1..n]]
 
 iHashDataCon :: DataCon
 iHashDataCon = DataCon {

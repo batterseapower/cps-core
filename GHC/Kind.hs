@@ -8,6 +8,13 @@ data Kind = ArgTypeKind | OpenTypeKind | LiftedTypeKind | UnliftedTypeKind | Unb
           | ArrowKind Kind Kind
           deriving (Eq, Show)
 
+mkArrowKinds :: [Kind] -> Kind -> Kind
+mkArrowKinds ks k = foldr ArrowKind k ks
+
+splitArrowKinds :: Kind -> ([Kind], Kind)
+splitArrowKinds (ArrowKind k1 k2) = first (k1:) $ splitArrowKinds k2
+splitArrowKinds k                 = ([], k)
+
 arrowResKind :: Kind -> Kind
 arrowResKind (ArrowKind _ k2) = k2
 arrowResKind _ = error "arrowResKind"
@@ -57,11 +64,17 @@ pairTyCon = TyCon {
     tyConKind = LiftedTypeKind `ArrowKind` LiftedTypeKind `ArrowKind` LiftedTypeKind
   }
 
-unboxedPairTyCon :: TyCon
-unboxedPairTyCon = TyCon {
-    tyConName = "(#,#)",
-    tyConKind = ArgTypeKind `ArrowKind` ArgTypeKind `ArrowKind` UnboxedTupleTypeKind
+unboxedTupleTyCon :: Int -> TyCon
+unboxedTupleTyCon n = TyCon {
+    tyConName = "(#" ++ replicate (n - 1) ',' ++ "#)",
+    tyConKind = replicate n ArgTypeKind `mkArrowKinds` UnboxedTupleTypeKind
   }
+
+isUnboxedTupleTyCon_maybe :: TyCon -> Maybe Int
+isUnboxedTupleTyCon_maybe tc
+  | k == UnboxedTupleTypeKind = Just (length ks)
+  | otherwise                 = Nothing
+  where (ks, k) = splitArrowKinds (tyConKind tc)
 
 intHashTyCon :: TyCon
 intHashTyCon = TyCon {

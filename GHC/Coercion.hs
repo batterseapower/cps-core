@@ -1,5 +1,6 @@
 module GHC.Coercion where
 
+import GHC.Kind
 import GHC.Var
 import GHC.Type
 

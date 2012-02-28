@@ -1,5 +1,6 @@
 module GHC.Var where
 
+import GHC.Kind
 import GHC.Type
 
 import Name

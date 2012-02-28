@@ -1,5 +1,6 @@
 module GHC.Data where
 
+import GHC.Kind
 import GHC.Type
 import GHC.Var
 
@@ -37,7 +38,7 @@ pairDataCon = DataCon {
     dataConBinders   = [ATyVar a_tv, ATyVar b_tv, AnId (typefulId a_ty), AnId (typefulId b_ty)],
     dataConTyCon     = pairTyCon,
     dataConTyConArgs = [a_ty, b_ty]
-  } where ([a_tv, b_tv], [a_ty, b_ty]) = shadowyTyVars [("a", LiftedTypeKind), ("b", LiftedTypeKind)]
+  } where ([a_tv, b_tv], [a_ty, b_ty]) = shadowyTyVarsTypes [("a", LiftedTypeKind), ("b", LiftedTypeKind)]
 
 unboxedPairDataCon :: DataCon
 unboxedPairDataCon = DataCon {
@@ -45,7 +46,7 @@ unboxedPairDataCon = DataCon {
     dataConBinders   = [ATyVar a_tv, ATyVar b_tv, AnId (typefulId a_ty), AnId (typefulId b_ty)],
     dataConTyCon     = unboxedPairTyCon,
     dataConTyConArgs = [a_ty, b_ty]
-  } where ([a_tv, b_tv], [a_ty, b_ty]) = shadowyTyVars [("a", OpenTypeKind), ("b", OpenTypeKind)]
+  } where ([a_tv, b_tv], [a_ty, b_ty]) = shadowyTyVarsTypes [("a", OpenTypeKind), ("b", OpenTypeKind)]
 
 iHashDataCon :: DataCon
 iHashDataCon = DataCon {

@@ -1,0 +1,11 @@
+# Temporary directories
+disabled/
+
+# OS crap
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.hi
+*.o
+dist/

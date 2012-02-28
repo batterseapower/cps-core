@@ -1,0 +1,21 @@
+Cabal-Version:      >= 1.2
+Build-Type:         Simple
+Name:               cpscore
+Version:            0.1
+Maintainer:         Max Bolingbroke <batterseapower@hotmail.com>
+Homepage:           http://www.github.com/batterseapower/cpscore
+License:            BSD3
+License-File:       LICENSE
+Author:             Max Bolingbroke
+Synopsis:           CPS core based approach to compiling Haskell
+Category:           Language
+
+Executable cpscore
+    Main-Is:         Main.hs
+    
+    Build-Depends:  base >= 4 && < 5, containers >= 0.3 && < 0.5,
+                    pretty >= 1.0.1.1 && < 1.1, prettyclass >= 1 && < 1.2,
+                    haskell-src-exts >= 1.9.0 && < 1.12.0, cpphs >= 1.11 && < 1.14
+
+    Ghc-Options:    -rtsopts -Wall -fno-warn-name-shadowing
+

@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternGuards #-}
 module GHC.Kind where
 
 import Name
@@ -87,6 +88,14 @@ eqHashTyCon k = TyCon {
     tyConName = "~#",
     tyConKind = k `ArrowKind` k `ArrowKind` UnliftedTypeKind
   }
+
+isEqHashTyCon :: TyCon -> Maybe Kind
+isEqHashTyCon tc
+  | tyConName tc == "~#"
+  , k `ArrowKind` _ `ArrowKind` UnliftedTypeKind <- tyConKind tc
+  = Just k
+  | otherwise
+  = Nothing
 
 intTyCon :: TyCon
 intTyCon = TyCon {

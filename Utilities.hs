@@ -690,3 +690,16 @@ type Bytes = Integer
 
 fileSize :: FilePath -> IO Bytes
 fileSize file = withFile file ReadMode hFileSize
+
+
+data ListPoint a = ListPoint [a] a [a]
+
+instance Functor ListPoint where
+    fmap f (ListPoint xs y zs) = ListPoint (map f xs) (f y) (map f zs)
+
+locateListPoint :: (a -> Bool) -> [a] -> ListPoint a
+locateListPoint p = go []
+  where go left [] = error "locateListPoint: no match"
+        go left (here:right)
+          | p here    = ListPoint (reverse left) here right
+          | otherwise = go (here:left) right

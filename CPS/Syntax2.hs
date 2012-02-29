@@ -27,6 +27,9 @@ mkNonBoxTy tys ntys = FunTy (NonBoxTy tys) ntys
 boolTy :: Type
 boolTy = mkBoxTy [[], []]
 
+intTy :: Type
+intTy = mkBoxTy [[IntHashTy]]
+
 
 data Id = Id {
     idName :: Name,
@@ -45,8 +48,6 @@ instance Eq CoId where (==) = (==) `on` getUnique
 instance Ord CoId where compare = compare `on` getUnique
 
 
-type IsPun = Bool
-
 -- Things which are available with literally zero computational effort
 -- NB: do not include arithmetic operation applications since we may want to share them
 data Trivial = IdOcc Id
@@ -54,6 +55,10 @@ data Trivial = IdOcc Id
              | PrimOp PrimOp
              | Pun Trivial
              | Update [CoType] CoType [CoType]
+
+-- NB: interesting simplification rule: call to something of boxed type with single no-args cont can be simplified to a call to that cont
+
+-- FIXME: have a CoTrivial with a polymorphic "unreachable" and monotyped "halt"?
 
 data Function = Function [Id] [CoId] Term | Box [CoType] [Trivial] [CoType]
 
@@ -73,7 +78,7 @@ primOpType pop
   | pop `elem` [Add, Subtract, Multiply, Divide, Modulo]
   = mkNonBoxTy [IntHashTy, IntHashTy] [[IntHashTy]]
   | pop `elem` [Equal, LessThan, LessThanEqual]
-  = mkNonBoxTy [IntHashTy, IntHashTy] [[boolTy]]
+  = mkNonBoxTy [IntHashTy, IntHashTy] [[boolTy]] -- FIXME: it might be caller if primops return "unboxed bools" so we could use them in e.g. literal-case desugarings + optimize the boxing away?
 
 trivialType :: Trivial -> Type
 trivialType (IdOcc x)               = idType x
@@ -164,8 +169,8 @@ renameCoIdBinder :: InScopeSet -> Subst -> CoId -> (InScopeSet, Subst, CoId)
 renameCoIdBinder iss subst u = (iss', subst { coIdSubst = coidsubst' }, u')
   where (iss', coidsubst', u') = renameCoIdBinder' iss (coIdSubst subst) u
 
-renameBinders :: (InScopeSet -> subst -> a -> (InScopeSet, subst, b))
-              -> InScopeSet -> subst -> [a] -> (InScopeSet, subst, [b])
+renameBinders :: (iss -> subst -> a -> (iss, subst, b))
+              -> iss -> subst -> [a] -> (iss, subst, [b])
 renameBinders rename = curry ((unnest .) . mapAccumL (\(ids, subst) -> nest . rename ids subst))
   where unnest ((a, b), c) = (a, b, c)
         nest (a, b, c) = ((a, b), c)
@@ -254,7 +259,7 @@ step (iss0, h, (subst0, Term xfs uks r), k) = case renameTransfer subst2 r of
                     -> return_step (iss2, h', (u', map (renameTrivial idsubst) ss), k')
                     | otherwise
                     -> error "step: untypeable call to IdOcc?"
-      Update ntys1 _ ntys2 | (IdOcc x':ts_update') <- ts', [u'] <- us' -> do -- NB: updating anything other than IdOcc is currently impossible and non-useful (FIXME: can be cleaner?)
+      Update ntys1 _ ntys2 | (IdOcc x':ts_update') <- ts', [u'] <- us' -> do -- NB: updating anything other than IdOcc is impossible (Pun is the only type-correct one, but such a thing is guaranteed to be updated, and with self-update we won't encounter that) (FIXME: can be cleaner?)
         return_step (iss2, insertUniqueMap x' (mkIdSubst (S.unions (map trivialFreeIds ts_update')), Box ntys1 ts_update' ntys2) h', (u', ts_update'), k')
         -- NB: we *can* do update-in-place for thunks in general, but do we want to?
         -- In the common case where (length ts_update' == 1) and the thing updated with is a box, it is unambiguously good:

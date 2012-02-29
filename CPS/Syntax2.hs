@@ -15,8 +15,10 @@ type CoType = [Type]
 data Type = IntHashTy
           | PtrTy
           | FunTy FunTyArg [CoType]
+          deriving (Show)
 
 data FunTyArg = BoxTy | NonBoxTy [Type]
+              deriving (Show)
 
 mkBoxTy :: [CoType] -> Type
 mkBoxTy ntys = FunTy BoxTy ntys
@@ -58,7 +60,7 @@ allR f = go
 data Id = Id {
     idName :: Name,
     idType :: Type
-  }
+  } deriving (Show)
 
 instance Eq Id where (==) = (==) `on` getUnique
 instance Ord Id where compare = compare `on` getUnique
@@ -66,7 +68,7 @@ instance Ord Id where compare = compare `on` getUnique
 data CoId = CoId {
     coIdName :: Name,
     coIdType :: CoType
-  }
+  } deriving (Show)
 
 instance Eq CoId where (==) = (==) `on` getUnique
 instance Ord CoId where compare = compare `on` getUnique
@@ -79,19 +81,24 @@ data Trivial = IdOcc Id
              | PrimOp PrimOp
              | Pun Trivial
              | Update [CoType] CoType [CoType]
+             deriving (Show)
 
 -- NB: interesting simplification rule: call to something of boxed type with single no-args cont can be simplified to a call to that cont
 
 -- FIXME: have a CoTrivial with a polymorphic "unreachable" and monotyped "halt"?
 
 data Function = Function [Id] [CoId] Term | Box [CoType] [Trivial] [CoType]
+              deriving (Show)
 
 data Continuation = Continuation [Id] Term
+                  deriving (Show)
 
 data Term = Term [(Id, Function)] [(CoId, Continuation)] Transfer
+          deriving (Show)
 
 data Transfer = Return CoId [Trivial]
               | Call Trivial [Trivial] [CoId]
+              deriving (Show)
 
 
 literalType :: Literal -> Type
@@ -137,6 +144,9 @@ instance Uniqueable Id where
 instance Uniqueable CoId where
     getUnique = getUnique . coIdName
 
+emptyUniqueMap :: UniqueMap a
+emptyUniqueMap = M.empty
+
 insertUniqueMap :: Uniqueable k => k -> a -> UniqueMap a -> UniqueMap a
 insertUniqueMap k v = M.insert (getUnique k) v
 
@@ -163,6 +173,9 @@ substFromIdSubst :: IdSubst -> Subst
 substFromIdSubst idsubst = Subst { idSubst = idsubst, coIdSubst = CoIdSubst M.empty }
 
 newtype InScopeSet = ISS { unISS :: S.Set Unique }
+
+emptyInScopeSet :: InScopeSet
+emptyInScopeSet = ISS S.empty
 
 uniqAway :: InScopeSet -> Unique -> (InScopeSet, Unique)
 uniqAway (ISS iss) = go

@@ -111,9 +111,7 @@ freshs :: (Context -> String -> a -> (Context, b))
 freshs fresh ids s tys = mapAccumL (\ids ty -> fresh ids s ty) ids tys
 
 
-
-
--- fromTerm e u
+-- fromTerm ids (subst, e) u
 --
 -- NB: 
 --   fromType (termType e) `allR subType` coIdType u

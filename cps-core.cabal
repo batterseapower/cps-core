@@ -3,11 +3,11 @@ Build-Type:         Simple
 Name:               cps-core
 Version:            0.1
 Maintainer:         Max Bolingbroke <batterseapower@hotmail.com>
-Homepage:           http://www.github.com/batterseapower/cpscore
+Homepage:           http://www.github.com/batterseapower/cps-core
 License:            BSD3
 License-File:       LICENSE
 Author:             Max Bolingbroke
-Synopsis:           A Core language for compiling Haskell that is both simpler than GHC Core and considerably more expressive
+Synopsis:           A core language that is both simpler and more expressive than GHC Core
 Category:           Language
 
 Executable cpscore

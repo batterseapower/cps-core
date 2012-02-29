@@ -259,7 +259,7 @@ step (iss0, h, (subst0, Term xfs uks r), k) = case renameTransfer subst2 r of
                     -> return_step (iss2, h', (u', map (renameTrivial idsubst) ss), k')
                     | otherwise
                     -> error "step: untypeable call to IdOcc?"
-      Update ntys1 _ ntys2 | (IdOcc x':ts_update') <- ts', [u'] <- us' -> do -- NB: updating anything other than IdOcc is impossible (Pun is the only type-correct one, but such a thing is guaranteed to be updated, and with self-update we won't encounter that) (FIXME: can be cleaner?)
+      Update ntys1 _ ntys2 | (IdOcc x':ts_update') <- ts', [u'] <- us' -> -- NB: updating anything other than IdOcc is impossible (Pun is the only type-correct one, but such a thing is guaranteed to be updated, and with self-update we won't encounter that) (FIXME: can be cleaner?)
         return_step (iss2, insertUniqueMap x' (mkIdSubst (S.unions (map trivialFreeIds ts_update')), Box ntys1 ts_update' ntys2) h', (u', ts_update'), k')
         -- NB: we *can* do update-in-place for thunks in general, but do we want to?
         -- In the common case where (length ts_update' == 1) and the thing updated with is a box, it is unambiguously good:
@@ -268,9 +268,9 @@ step (iss0, h, (subst0, Term xfs uks r), k) = case renameTransfer subst2 r of
         --
         -- One thing is clear: the compiler must be very careful when it introduces one of these boxes. Perhaps it should only
         -- do so when it is clear that the thunk will not in fact be updated (think about CPR).
-      PrimOp pop | Just t' <- stepPrimOp pop ts', [u'] <- us' -> do
+      PrimOp pop | Just t' <- stepPrimOp pop ts', [u'] <- us' ->
         return_step (iss2, h', (u', [t']), k')
-      Pun t' | [] <- ts', [u'] <- us' -> do -- FIXME: this means that Puns could be a primop, right?
+      Pun t' | [] <- ts', [u'] <- us' -> -- FIXME: this means that Puns could be a primop, right?
         return_step (iss2, h', (u', [t']), k')
       _ -> error "step: untypeable call to non-IdOcc?"
   where

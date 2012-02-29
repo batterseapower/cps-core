@@ -1,13 +1,13 @@
 Cabal-Version:      >= 1.2
 Build-Type:         Simple
-Name:               cpscore
+Name:               cps-core
 Version:            0.1
 Maintainer:         Max Bolingbroke <batterseapower@hotmail.com>
 Homepage:           http://www.github.com/batterseapower/cpscore
 License:            BSD3
 License-File:       LICENSE
 Author:             Max Bolingbroke
-Synopsis:           CPS core based approach to compiling Haskell
+Synopsis:           A Core language for compiling Haskell that is both simpler than GHC Core and considerably more expressive
 Category:           Language
 
 Executable cpscore

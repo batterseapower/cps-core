@@ -343,6 +343,27 @@ stepUniqueSupply :: UniqueSupply -> (UniqueSupply, Unique)
 stepUniqueSupply = second uniqueFromSupply . splitUniqueSupply
 
 
+type UniqueMap a = M.Map Unique a
+
+class Uniqueable k where
+    getUnique :: k -> Unique
+
+instance Uniqueable Unique where
+    getUnique = id
+
+emptyUniqueMap :: UniqueMap a
+emptyUniqueMap = M.empty
+
+insertUniqueMap :: Uniqueable k => k -> a -> UniqueMap a -> UniqueMap a
+insertUniqueMap k v = M.insert (getUnique k) v
+
+lookupUniqueMap :: Uniqueable k => k -> UniqueMap a -> Maybe a
+lookupUniqueMap k = M.lookup (getUnique k)
+
+findUniqueWithDefault :: Uniqueable k => a -> k -> UniqueMap a -> a
+findUniqueWithDefault def k = M.findWithDefault def (getUnique k)
+
+
 data Train a b = Wagon a (Train a b)
                | Caboose b
 
@@ -699,7 +720,7 @@ instance Functor ListPoint where
 
 locateListPoint :: (a -> Bool) -> [a] -> ListPoint a
 locateListPoint p = go []
-  where go left [] = error "locateListPoint: no match"
+  where go _    [] = error "locateListPoint: no match"
         go left (here:right)
           | p here    = ListPoint (reverse left) here right
           | otherwise = go (here:left) right

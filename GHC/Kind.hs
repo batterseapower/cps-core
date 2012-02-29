@@ -5,6 +5,8 @@ import Name
 import Utilities
 
 
+infixr 7 `ArrowKind`
+
 data Kind = ArgTypeKind | OpenTypeKind | LiftedTypeKind | UnliftedTypeKind | UnboxedTupleTypeKind
           | ArrowKind Kind Kind
           deriving (Eq, Show)
@@ -18,7 +20,7 @@ splitArrowKinds k                 = ([], k)
 
 arrowResKind :: Kind -> Kind
 arrowResKind (ArrowKind _ k2) = k2
-arrowResKind _ = error "arrowResKind"
+arrowResKind k = error $ "arrowResKind: " ++ show k
 
 isSubKind :: Kind -> Kind -> Bool
 -- Otherwise-incomparable arrow elements:
@@ -56,7 +58,7 @@ instance Pretty TyCon where
 funTyCon :: TyCon
 funTyCon = TyCon {
     tyConName = "(->)",
-    tyConKind = ArgTypeKind `ArrowKind` OpenTypeKind
+    tyConKind = ArgTypeKind `ArrowKind` OpenTypeKind `ArrowKind` LiftedTypeKind
   }
 
 pairTyCon :: TyCon
@@ -120,6 +122,9 @@ instance Eq TyVar where
 
 instance Ord TyVar where
     compare = compare `on` tyVarName
+
+instance Uniqueable TyVar where
+    getUnique = getUnique . tyVarName
 
 instance Pretty TyVar where
     pPrintPrec level prec = pPrintPrec level prec . tyVarName

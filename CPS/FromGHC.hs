@@ -209,9 +209,3 @@ fromAlts select ids0 subst mb_def selectors_alts u = bindKont u ids0 fromAlts'
                                                                                       (ids2b, subst', mb_ys) = renameBinders renameVarBinder ids2a subst xs
                                                                                   in ((ids2b, addContinuation w (Continuation (catMaybes mb_ys) (fromTerm ids2 (subst', e) (Unknown u))) e1), (selector, w)))
                                               (ids1, e1) selectors_alts
-
-addFunction :: Id -> Function -> Term -> Term
-addFunction x f (Term xfs uks r) = Term ((x, f) : xfs) uks r
-
-addContinuation :: CoId -> Continuation -> Term -> Term
-addContinuation u k (Term xfs uks r) = Term xfs ((u, k) : uks) r

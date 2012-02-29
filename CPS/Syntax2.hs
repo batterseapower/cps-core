@@ -12,6 +12,8 @@ import qualified Data.Set as S
 
 type CoType = [Type]
 
+infixr 7 `FunTy`
+
 data Type = IntHashTy
           | PtrTy
           | FunTy FunTyArg [CoType]
@@ -127,34 +129,11 @@ continuationCoType :: Continuation -> CoType
 continuationCoType (Continuation xs _) = map idType xs
 
 
-type UniqueMap a = M.Map Unique a
-
-class Uniqueable k where
-    getUnique :: k -> Unique
-
-instance Uniqueable Unique where
-    getUnique = id
-
-instance Uniqueable Name where
-    getUnique = nameUnique
-
 instance Uniqueable Id where
     getUnique = getUnique . idName
 
 instance Uniqueable CoId where
     getUnique = getUnique . coIdName
-
-emptyUniqueMap :: UniqueMap a
-emptyUniqueMap = M.empty
-
-insertUniqueMap :: Uniqueable k => k -> a -> UniqueMap a -> UniqueMap a
-insertUniqueMap k v = M.insert (getUnique k) v
-
-lookupUniqueMap :: Uniqueable k => k -> UniqueMap a -> Maybe a
-lookupUniqueMap k = M.lookup (getUnique k)
-
-findUniqueWithDefault :: Uniqueable k => a -> k -> UniqueMap a -> a
-findUniqueWithDefault def k = M.findWithDefault def (getUnique k)
 
 
 newtype IdSubst = IdSubst { unIdSubst :: UniqueMap Trivial }
@@ -164,6 +143,9 @@ mkIdSubst xs = IdSubst (M.fromList [(getUnique x, IdOcc x) | x <- S.toList xs])
 
 newtype CoIdSubst = CoIdSubst { unCoIdSubst :: UniqueMap CoId }
 
+mkCoIdSubst :: S.Set CoId -> CoIdSubst
+mkCoIdSubst us = CoIdSubst (M.fromList [(getUnique u, u) | u <- S.toList us])
+
 data Subst = Subst { idSubst :: IdSubst, coIdSubst :: CoIdSubst }
 
 emptySubst :: Subst
@@ -172,19 +154,9 @@ emptySubst = Subst { idSubst = IdSubst M.empty, coIdSubst = CoIdSubst M.empty }
 substFromIdSubst :: IdSubst -> Subst
 substFromIdSubst idsubst = Subst { idSubst = idsubst, coIdSubst = CoIdSubst M.empty }
 
-newtype InScopeSet = ISS { unISS :: S.Set Unique }
+substFromCoIdSubst :: CoIdSubst -> Subst
+substFromCoIdSubst coidsubst = Subst { idSubst = IdSubst M.empty, coIdSubst = coidsubst }
 
-emptyInScopeSet :: InScopeSet
-emptyInScopeSet = ISS S.empty
-
-uniqAway :: InScopeSet -> Unique -> (InScopeSet, Unique)
-uniqAway (ISS iss) = go
-  where go u | u `S.member` iss = go (bumpUnique u)
-             | otherwise        = (ISS (S.insert u iss), u)
-
-uniqAwayName :: InScopeSet -> Name -> (InScopeSet, Name)
-uniqAwayName iss n = (iss', n { nameUnique = u' })
-  where (iss', u') = uniqAway iss (nameUnique n)
 
 renameIdBinder' :: InScopeSet -> IdSubst -> Id -> (InScopeSet, IdSubst, Id)
 renameIdBinder' iss idsubst x = (iss', IdSubst (insertUniqueMap n (IdOcc x') (unIdSubst idsubst)), x')
@@ -269,17 +241,28 @@ trivialFreeIds (Update _ _ _) = S.empty
 trivialFreeIds (Pun t)        = trivialFreeIds t
 
 
-type Heap = UniqueMap (IdSubst, Function)
+type Heap = M.Map Id (IdSubst, Function)
 
-type Stack = [UniqueMap (Subst, Continuation)]
+type Stack = [M.Map CoId (Subst, Continuation)]
 
 stackLookup :: CoId -> Stack -> Maybe ((Subst, Continuation), Stack)
 stackLookup _ []     = Nothing
-stackLookup u (kf:k) = case lookupUniqueMap u kf of
+stackLookup u (kf:k) = case M.lookup u kf of
     Just res -> Just (res, kf:k)
     Nothing  -> stackLookup u k
 
 type State = (InScopeSet, Heap, (Subst, Term), Stack)
+
+addFunction :: Id -> Function -> Term -> Term
+addFunction x f (Term xfs uks r) = Term ((x, f) : xfs) uks r
+
+addContinuation :: CoId -> Continuation -> Term -> Term
+addContinuation u k (Term xfs uks r) = Term xfs ((u, k) : uks) r
+
+stateToTerm :: State -> Term
+stateToTerm (iss, h, (subst, e), k) = flip (foldr (\(x, (idsubst, f)) -> addFunction x (renameFunction iss idsubst f))) (M.toList h) $
+                                      flip (foldr (\kf -> flip (foldr (\(u, (subst, k)) -> addContinuation u (renameContinuation iss subst k))) (M.toList kf))) k $
+                                      renameTerm iss subst e
 
 -- Principal: it's OK to error out if the term is badly typed, but not if some information is missing
 -- NB: the output type is guaranteed to be a *subtype* of the input type. In representation-type systems
@@ -301,7 +284,7 @@ step (iss0, h, (subst0, Term xfs uks r), k) = case renameTransfer subst2 r of
     Return u' ts'   -> return_step (iss2, h', (u', ts'), k')
     Call t' ts' us' -> case t' of
       IdOcc x' -> do
-        (idsubst, f) <- lookupUniqueMap x' h
+        (idsubst, f) <- M.lookup x' h
         case f of Function ys vs e
                     -> return (iss2, h', (insertRenamings insertIdRenaming ys ts' (insertRenamings insertCoIdRenaming vs us' (substFromIdSubst idsubst)), e), k')
                   Box  tys ss _
@@ -311,7 +294,7 @@ step (iss0, h, (subst0, Term xfs uks r), k) = case renameTransfer subst2 r of
                     | otherwise
                     -> error "step: untypeable call to IdOcc?"
       Update ntys1 _ ntys2 | (IdOcc x':ts_update') <- ts', [u'] <- us' -> -- NB: updating anything other than IdOcc is impossible (Pun is the only type-correct one, but such a thing is guaranteed to be updated, and with self-update we won't encounter that) (FIXME: can be cleaner?)
-        return_step (iss2, insertUniqueMap x' (mkIdSubst (S.unions (map trivialFreeIds ts_update')), Box ntys1 ts_update' ntys2) h', (u', ts_update'), k')
+        return_step (iss2, M.insert x' (mkIdSubst (S.unions (map trivialFreeIds ts_update')), Box ntys1 ts_update' ntys2) h', (u', ts_update'), k')
         -- NB: we *can* do update-in-place for thunks in general, but do we want to?
         -- In the common case where (length ts_update' == 1) and the thing updated with is a box, it is unambiguously good:
         -- any extra heap allocation can be eliminated by the GC when it collapses indirections (using punning). But if we do
@@ -329,8 +312,8 @@ step (iss0, h, (subst0, Term xfs uks r), k) = case renameTransfer subst2 r of
     (us, ks) = unzip uks
     (iss1, subst1, xs') = renameBinders renameIdBinder   iss0 subst0 xs
     (iss2, subst2, us') = renameBinders renameCoIdBinder iss1 subst1 us
-    h' = M.fromList (map getUnique xs' `zip` map ((,) (idSubst subst2)) fs) `M.union` h
-    k' = M.fromList (map getUnique us' `zip` map ((,) subst2)           ks) : k
+    h' = M.fromList (xs' `zip` map ((,) (idSubst subst2)) fs) `M.union` h
+    k' = M.fromList (us' `zip` map ((,) subst2)           ks) : k
 
     return_step (iss, h, (u', ts'), k) = do
         ((subst, Continuation ys e), k) <- stackLookup u' k

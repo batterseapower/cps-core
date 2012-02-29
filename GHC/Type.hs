@@ -2,7 +2,10 @@ module GHC.Type where
 
 import GHC.Kind
 
+import Name
 import Utilities
+
+import qualified Data.Set as S
 
 
 data Type = TyVarTy TyVar
@@ -30,6 +33,8 @@ splitTyConAppTy_maybe = go []
         go args (TyConTy tc)    = Just (tc, args)
         go _    _               = Nothing
 
+infixr 7 `mkFunTy`
+
 mkFunTy :: Type -> Type -> Type
 mkFunTy ty1 ty2 = mkTyConAppTy funTyCon [ty1, ty2]
 
@@ -41,11 +46,43 @@ splitFunTy_maybe ty = case splitTyConAppTy_maybe ty of
 funResTy :: Type -> Type
 funResTy ty = case splitFunTy_maybe ty of
     Just (_, ty2) -> ty2
-    _             -> error "funResTy"
+    _             -> error $ "funResTy: " ++ show ty
 
 instTy :: Type -> Type -> Type
-instTy (ForAllTy a ty_body) ty_a = undefined -- FIXME: need renamings before I can do this
+instTy (ForAllTy a ty_body) ty_a = renameType (mkInScopeSet (typeFreeVars ty_a)) (mkTypeSubst a ty_a) ty_body
 instTy _ _ = error "mkInstTy"
+
+
+newtype TypeSubst = TypeSubst { unTypeSubst :: UniqueMap Type }
+
+mkTypeSubst :: TyVar -> Type -> TypeSubst
+mkTypeSubst a ty = TypeSubst (insertUniqueMap a ty emptyUniqueMap)
+
+renameTyVar :: TypeSubst -> TyVar -> Type
+renameTyVar subst a = findUniqueWithDefault (error "renameTyVar: out of scope") a (unTypeSubst subst)
+
+renameTypeBinder :: InScopeSet -> TypeSubst -> TyVar -> (InScopeSet, TypeSubst, TyVar)
+renameTypeBinder iss subst a = (iss', TypeSubst (insertUniqueMap a (TyVarTy a') (unTypeSubst subst)), a')
+  where n = tyVarName a
+        (iss', n') = uniqAwayName iss n
+        a' = a { tyVarName = n' } -- NB: don't need to rename types
+
+
+typeFreeVars :: Type -> S.Set TyVar
+typeFreeVars ty = case ty of
+    TyVarTy a     -> S.singleton a
+    TyConTy _     -> S.empty
+    AppTy ty1 ty2 -> typeFreeVars ty1 `S.union` typeFreeVars ty2
+    ForAllTy a ty -> S.delete a (typeFreeVars ty)
+
+
+renameType :: InScopeSet -> TypeSubst -> Type -> Type
+renameType iss subst ty = case ty of
+    TyVarTy a     -> renameTyVar subst a
+    TyConTy tc    -> TyConTy tc
+    AppTy ty1 ty2 -> AppTy (renameType iss subst ty1) (renameType iss subst ty2)
+    ForAllTy a ty -> ForAllTy a' (renameType iss' subst' ty)
+      where (iss', subst', a') = renameTypeBinder iss subst a
 
 
 intTy :: Type

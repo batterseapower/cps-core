@@ -1,6 +1,6 @@
 module Main where
 
-import CPS.Syntax
+import CPS.Syntax2
 
 import GHC.Syntax
 

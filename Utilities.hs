@@ -582,6 +582,12 @@ uncons :: [a] -> Maybe (a, [a])
 uncons []     = Nothing
 uncons (x:xs) = Just (x, xs)
 
+at :: [a] -> Int -> Maybe a
+at _ n | n < 0 = error "at: negative argument"
+at []     _ = Nothing
+at (x:_)  0 = Just x
+at (_:xs) n = at xs (n - 1)
+
 listSelectors :: [[a] -> a]
 listSelectors = iterate (\f xs -> f (tail xs)) head
 

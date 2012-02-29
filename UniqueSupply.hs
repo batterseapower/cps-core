@@ -11,7 +11,7 @@
 --   This is a custom version of uniqueid-0.1.1 to resolve some bugs I
 --   found in it.
 module UniqueSupply (
-    Unique, hashedUnique, UniqueSupply, initUniqueSupply, splitUniqueSupplyL, splitUniqueSupply, uniqueFromSupply
+    Unique, hashedUnique, bumpUnique, UniqueSupply, initUniqueSupply, splitUniqueSupplyL, splitUniqueSupply, uniqueFromSupply
   ) where
 
 import GHC.Exts
@@ -25,6 +25,9 @@ import System.IO.Unsafe ( unsafePerformIO )
 -- | Unique identifiers are of type 'Unique' and can be hashed to an 'Int'
 --   usning the function 'hashedUnique'.
 newtype Unique = Unique { hashedUnique :: Int }
+
+bumpUnique :: Unique -> Unique
+bumpUnique u = Unique { hashedUnique = hashedUnique u + 1 }
 
 -- | Supplies for unique identifiers are of type 'UniqueSupply' and can be
 --   split into two new supplies or yield a unique identifier.

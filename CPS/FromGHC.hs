@@ -116,7 +116,7 @@ freshs fresh ids s tys = mapAccumL (\ids ty -> fresh ids s ty) ids tys
 -- fromTerm e u
 --
 -- NB: 
---   fromType (termType e) == coIdType u
+--   fromType (termType e) `allR subType` coIdType u
 --   FVs are available in the environment of the output with their *thunky* types
 data Kont = Unknown CoId
           | Known [Type] (Context -> [Trivial] -> Term)

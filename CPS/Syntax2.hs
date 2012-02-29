@@ -30,6 +30,30 @@ boolTy = mkBoxTy [[], []]
 intTy :: Type
 intTy = mkBoxTy [[IntHashTy]]
 
+-- x `subType` y if a variable of type x can be applied to a function with argument type y
+-- NB: due to the presence of subtyping, types may "improve" during reduction, so we may be able
+-- to improve types by reconstructing the types of let-bound arguments and pushing them down to application sites
+subType :: Type -> Type -> Bool
+IntHashTy      `subType` IntHashTy      = True
+IntHashTy      `subType` _              = False
+_              `subType` IntHashTy      = False
+PtrTy          `subType` PtrTy          = True
+PtrTy          `subType` _              = False
+_              `subType` PtrTy          = True
+FunTy a1 ntys1 `subType` FunTy a2 ntys2 = a2 `subFunTyArg` a1 && allR (allR subType) ntys1 ntys2
+
+subFunTyArg :: FunTyArg -> FunTyArg -> Bool
+BoxTy         `subFunTyArg` BoxTy         = True
+BoxTy         `subFunTyArg` _             = False
+_             `subFunTyArg` BoxTy         = False
+NonBoxTy tys1 `subFunTyArg` NonBoxTy tys2 = allR subType tys1 tys2
+
+allR :: (a -> b -> Bool) -> [a] -> [b] -> Bool
+allR f = go
+  where go []     []             = True
+        go (x:xs) (y:ys) | f x y = go xs ys
+        go _      _              = False
+
 
 data Id = Id {
     idName :: Name,
@@ -245,6 +269,20 @@ stackLookup u (kf:k) = case lookupUniqueMap u kf of
 type State = (InScopeSet, Heap, (Subst, Term), Stack)
 
 -- Principal: it's OK to error out if the term is badly typed, but not if some information is missing
+-- NB: the output type is guaranteed to be a *subtype* of the input type. In representation-type systems
+-- with subtyping reduction may improve the type e.g.:
+--
+-- let id :: forall a. a -> a = /\a. \(x :: a). x
+--     f :: Int -> Int = id @Int
+-- in id @(Int -> Int) f :: Int -> Int
+--
+-- let id :: * -> * = \(x :: *). x
+--     f :: * -> * = id
+-- in id f :: *
+--
+-- let id :: * -> * = \(x :: *). x
+--     f :: * -> * = id
+-- in f :: * -> *
 step :: State -> Maybe State
 step (iss0, h, (subst0, Term xfs uks r), k) = case renameTransfer subst2 r of
     Return u' ts'   -> return_step (iss2, h', (u', ts'), k')

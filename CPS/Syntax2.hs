@@ -84,7 +84,7 @@ data Trivial = IdOcc Id
              | Pun Trivial
              | Update [CoType] CoType [CoType]
              deriving (Show)
--- FIXME: add "blackhole" (useful if moving update out of a thunk itself statically, as well as at runtime)
+-- FIXME: add "blackhole"/"update-with-bh" primop (useful if moving update out of a thunk itself statically, as well as at runtime)
 
 -- NB: interesting simplification rule: call to something of boxed type with single no-args cont can be simplified to a call to that cont
 -- NB: interesting simplification rule: no need to update things that are already values/evaluate update at compile time

@@ -23,7 +23,7 @@ fromType ty = case G.splitTyConAppTy_maybe ty of
     Just (tc, [ty1, ty2])
       | tc == G.funTyCon             -> [mkNonBoxTy (fromTypeThunky ty1) [fromType ty2]] -- NB: this does not actually permit unboxed tuples on the left, the list is needed for void args
       | Just _ <- G.isEqHashTyCon tc -> []
-      | tc == G.pairTyCon            -> [mkBoxTy [[fromLiftedType ty1, fromLiftedType ty2]]]
+      | tc == G.pairTyCon            -> [mkBoxTy [[fromLiftedTypeThunky ty1, fromLiftedTypeThunky ty2]]]
     Just (tc, [])
       | tc == G.boolTyCon    -> [boolTy]
       | tc == G.intTyCon     -> [intTy]
@@ -42,9 +42,15 @@ fromType ty = case G.splitTyConAppTy_maybe ty of
 
 -- NB: the input type must be lifted
 fromLiftedType :: G.Type -> Type
-fromLiftedType ty = case fromTypeThunky ty of
+fromLiftedType ty = case fromType ty of
     [ty] -> ty
     _    -> error "fromLiftedType: non-unary input type - must be an unboxed tuple or void unlifted type"
+
+-- NB: the input type must be lifted
+fromLiftedTypeThunky :: G.Type -> Type
+fromLiftedTypeThunky ty = case fromTypeThunky ty of
+    [ty] -> ty
+    _    -> error "fromLiftedTypeThunky: non-unary input type - must be an unboxed tuple or void unlifted type"
 
 fromTypeThunky :: G.Type -> [Type]
 fromTypeThunky ty

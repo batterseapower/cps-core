@@ -86,6 +86,7 @@ data Trivial = IdOcc Id
              deriving (Show)
 
 -- NB: interesting simplification rule: call to something of boxed type with single no-args cont can be simplified to a call to that cont
+-- NB: interesting simplification rule: no need to update things that are already values/evaluate update at compile time
 
 -- FIXME: have a CoTrivial with a polymorphic "unreachable" and monotyped "halt"?
 
@@ -101,6 +102,59 @@ data Term = Term [(Id, Function)] [(CoId, Continuation)] Transfer
 data Transfer = Return CoId [Trivial]
               | Call Trivial [Trivial] [CoId]
               deriving (Show)
+
+instance Pretty Type where
+    pPrintPrec level prec ty = case ty of
+      IntHashTy    -> text "Int#"
+      PtrTy        -> text "*"
+      FunTy a ntys -> prettyParen (prec >= appPrec) $ pPrintPrec level appPrec a <+> text "->" <+> pPrintPrecMulti level noPrec (text "|") [PrettyFunction $ \level prec -> pPrintPrecMulti level prec (text ",") nty | nty <- ntys]
+
+instance Pretty FunTyArg where
+    pPrintPrec level prec a = case a of
+      BoxTy         -> text "<!>"
+      NonBoxTy tys  -> pPrintPrecMulti level prec (text ",") tys
+
+instance Pretty Id where
+    pPrintPrec level prec = pPrintPrec level prec . idName
+
+instance Pretty CoId where
+    pPrintPrec level prec = pPrintPrec level prec . coIdName
+
+instance Pretty Trivial where
+    pPrintPrec level prec t = case t of
+      IdOcc x               -> pPrintPrec level prec x
+      Literal l             -> pPrintPrec level prec l
+      PrimOp pop            -> pPrintPrec level prec pop
+      Pun t                 -> pPrintPrec level prec t
+      Update ntys1 nt ntys2 -> pPrintPrecFunny level prec (text "Update") ntys1 nt ntys2
+
+instance Pretty Function where
+    pPrintPrec level prec f = case f of
+      Function xs us e   -> pPrintPrecLams level prec [PrettyFunction $ \level prec -> pPrintPrecMulti level prec (text ",") xs, PrettyFunction $ \level prec -> pPrintPrecMulti level prec (text ",") us] e
+      Box ntys1 ts ntys2 -> pPrintPrecFunny level prec (text "Box") ntys1 ts ntys2
+
+instance Pretty Continuation where
+    pPrintPrec level prec (Continuation us e) = pPrintPrecLams level prec us e
+
+instance Pretty Term where
+    pPrintPrec level prec (Term xfs uks r) = pPrintPrecLetRec level prec ([(asPrettyFunction x, asPrettyFunction f) | (x, f) <- xfs] ++ [(asPrettyFunction u, asPrettyFunction k) | (u, k) <- uks]) r
+
+instance Pretty Transfer where
+    pPrintPrec level prec r = case r of
+      Return u ts -> pPrintPrecApps level prec u ts
+      Call t ts us -> pPrintPrecApps level prec t [PrettyFunction $ \level prec -> pPrintPrecMulti level prec (text ",") ts, PrettyFunction $ \level prec -> pPrintPrecMulti level prec (text ",") us]
+
+pPrintPrecFunny :: (Pretty a, Pretty b, Pretty c, Pretty d) => PrettyLevel -> Rational -> a -> [[b]] -> [c] -> [[d]] -> Doc
+pPrintPrecFunny level prec hd ntys1 ts ntys2 = pPrintPrecApps level prec hd $ [PrettyFunction $ \level prec -> pPrintPrecMulti level prec (text ",") nty | nty <- ntys1] ++
+                                                                              [PrettyFunction $ \level prec -> pPrintPrecMulti level prec (text ",") ts] ++
+                                                                              [PrettyFunction $ \level prec -> pPrintPrecMulti level prec (text ",") nty | nty <- ntys2]
+
+pPrintPrecMulti :: Pretty a => PrettyLevel -> Rational -> Doc -> [a] -> Doc
+pPrintPrecMulti level prec _   [x] = pPrintPrec level prec x
+pPrintPrecMulti level _    sep xs  = angles (hsep (punctuate sep [pPrintPrec level noPrec x | x <- xs]))
+
+pPrintPrecLams :: (Pretty a, Pretty b) => PrettyLevel -> Rational -> [a] -> b -> Doc
+pPrintPrecLams level prec xs e = prettyParen (prec > noPrec) $ text "\\" <> hsep [pPrintPrec level appPrec y | y <- xs] <+> text "->" <+> pPrintPrec level noPrec e
 
 
 literalType :: Literal -> Type
@@ -284,7 +338,7 @@ step (iss0, h, (subst0, Term xfs uks r), k) = case renameTransfer subst2 r of
     Return u' ts'   -> return_step (iss2, h', (u', ts'), k')
     Call t' ts' us' -> case t' of
       IdOcc x' -> do
-        (idsubst, f) <- M.lookup x' h
+        (idsubst, f) <- M.lookup x' h'
         case f of Function ys vs e
                     -> return (iss2, h', (insertRenamings insertIdRenaming ys ts' (insertRenamings insertCoIdRenaming vs us' (substFromIdSubst idsubst)), e), k')
                   Box  tys ss _

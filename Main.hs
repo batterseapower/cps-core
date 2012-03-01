@@ -21,7 +21,7 @@ example = G.Case (G.Value (G.Literal (Int 2))) intHashTy two [(G.DefaultAlt,
                 G.LetRec [(lifted_id,  G.Value (G.Lambda (G.ATyVar a) (G.Value (G.Lambda (G.AnId x) (G.Var x))))),
                           (prim_id', G.Value (G.Lambda (G.AnId y) (G.Var y))),
                           (prim_id, G.Var lifted_id `G.TyApp` G.idType prim_id' `G.App` prim_id')] $
-                         G.PrimOp Add [G.Value (G.Literal (Int 1)), G.Var prim_id `G.App` two])]
+                         G.PrimOp Add [G.PrimOp Add [G.Value (G.Literal (Int 1)), G.Var prim_id `G.App` two], G.Var prim_id `G.App` two])] -- Use prim_id twice to test thunk update works
   where
     [a_n, id_n, prim_id_n, prim_id_n', x_n, y_n, two_n] = shadowyNames ["a", "id", "prim_id", "prim_id'", "x", "y", "two"]
     a = G.TyVar { G.tyVarName = a_n, G.tyVarKind = G.LiftedTypeKind }
@@ -35,9 +35,10 @@ example = G.Case (G.Value (G.Literal (Int 2))) intHashTy two [(G.DefaultAlt,
 
 main :: IO ()
 main = do
-    ids <- example `seq` initUniqueSupply 'x'
+    ids <- initUniqueSupply 'x'
     let (ids', halt_n) = freshName ids "halt"
         halt = CoId { coIdName = halt_n, coIdType = [IntHashTy] }
         steps e = map stateToTerm $ s : unfoldr (fmap (\x -> (x, x)) . step) s
           where s = (mkInScopeSet (S.singleton halt_n), M.empty, (substFromCoIdSubst (mkCoIdSubst (S.singleton halt)), e), [])
-    mapM_ print $ steps $ fromTerm (ids', emptyInScopeSet) (emptyUniqueMap, example) (Unknown halt)
+    putStrLn $ pPrintRender example
+    mapM_ (putStrLn . pPrintRender) $ steps $ fromTerm (ids', emptyInScopeSet) (emptyUniqueMap, example) (Unknown halt)

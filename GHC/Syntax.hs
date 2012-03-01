@@ -73,12 +73,9 @@ instance Pretty Term where
         Value v         -> pPrintPrec level prec v
         App e1 x2       -> pPrintPrecApp level prec e1 x2
         TyApp e1 ty2    -> pPrintPrecApp level prec e1 ty2
-        PrimOp pop xs   -> pPrintPrecPrimOp level prec pop xs
+        PrimOp pop xs   -> pPrintPrecApps level prec pop xs
         Case e _ x alts -> pPrintPrecCase level prec e x alts
         Cast e co       -> pPrintPrecCast level prec e co
-
-pPrintPrecPrimOp :: (Pretty a, Pretty b) => PrettyLevel -> Rational -> a -> [b] -> Doc
-pPrintPrecPrimOp level prec pop xs = pPrintPrecApps level prec pop xs
 
 pPrintPrecCase :: (Pretty a, Pretty b, Pretty c, Pretty d) => PrettyLevel -> Rational -> a -> d -> [(b, c)] -> Doc
 pPrintPrecCase level prec e x alts = prettyParen (prec > noPrec) $ hang (text "case" <+> pPrintPrec level noPrec e <> text "@" <> pPrintPrec level noPrec x <+> text "of") 2 $ vcat (map (pPrintPrecAlt level noPrec) alts)
@@ -88,11 +85,6 @@ pPrintPrecAlt level _ (alt_con, alt_e) = hang (pPrintPrec level noPrec alt_con <
 
 pPrintPrecCast :: (Pretty a, Pretty b) => PrettyLevel -> Rational -> a -> b -> Doc
 pPrintPrecCast level prec e co = prettyParen (prec >= appPrec) $ pPrintPrec level opPrec e <+> text "|>" <+> pPrintPrec level appPrec co
-
-pPrintPrecLetRec :: (Pretty a, Pretty b, Pretty c) => PrettyLevel -> Rational -> [(a, b)] -> c -> Doc
-pPrintPrecLetRec level prec xes e_body
-  | [] <- xes = pPrintPrec level prec e_body
-  | otherwise = prettyParen (prec > noPrec) $ hang (if level == haskellLevel then text "let" else text "letrec") 2 (vcat [pPrintPrec level noPrec x <+> text "=" <+> pPrintPrec level noPrec e | (x, e) <- xes]) $$ text "in" <+> pPrintPrec level noPrec e_body
 
 instance Pretty AltCon where
     pPrintPrec level prec altcon = case altcon of
@@ -105,13 +97,13 @@ instance Pretty Value where
         -- Unfortunately, this nicer pretty-printing doesn't work for general (TermF ann):
         --Lambda x e    -> pPrintPrecLam level prec (x:xs) e'
         --  where (xs, e') = collectLambdas e
-        Lambda x e    -> pPrintPrecLam level prec [x] e
+        Lambda x e    -> pPrintPrecLams level prec [x] e
         Data dc xs    -> pPrintPrecApps level prec dc xs
         Literal l     -> pPrintPrec level prec l
         Coercion co   -> pPrintPrec level prec co
 
-pPrintPrecLam :: Pretty a => PrettyLevel -> Rational -> [Var] -> a -> Doc
-pPrintPrecLam level prec xs e = prettyParen (prec > noPrec) $ text "\\" <> hsep [pPrintPrec level appPrec y | y <- xs] <+> text "->" <+> pPrintPrec level noPrec e
+pPrintPrecLams :: Pretty a => PrettyLevel -> Rational -> [Var] -> a -> Doc
+pPrintPrecLams level prec xs e = prettyParen (prec > noPrec) $ text "\\" <> hsep [pPrintPrec level appPrec y | y <- xs] <+> text "->" <+> pPrintPrec level noPrec e
 
 
 termType :: Term -> Type
@@ -122,12 +114,12 @@ termType (TyApp e ty) = instTy (termType e) ty
 termType (PrimOp pop es) = case (pop, map termType es) of
     (pop, [ty1, ty2])
       | pop `elem` [Add, Subtract, Multiply, Divide, Modulo]
-      , ty1 == intTy
-      , ty2 == intTy
+      , ty1 == intHashTy
+      , ty2 == intHashTy
       -> intTy
       | pop `elem` [Equal, LessThan, LessThanEqual]
-      , ty1 == intTy
-      , ty2 == intTy
+      , ty1 == intHashTy
+      , ty2 == intHashTy
       -> boolTy
     _ -> error "termType: PrimOp"
 termType (Case _ ty _ _) = ty
@@ -141,7 +133,7 @@ valueType (Data dc xs)  = instPiTys (dataConType dc) xs
 valueType (Literal l)   = literalType l
 
 literalType :: Literal -> Type
-literalType (Int _) = intTy
+literalType (Int _) = intHashTy
 
 
 freshFloatId :: UniqueSupply -> String -> Term -> (UniqueSupply, Maybe (Id, Term), Id)

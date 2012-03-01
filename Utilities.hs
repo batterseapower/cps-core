@@ -384,6 +384,11 @@ pPrintPrecApp level prec e1 e2 = prettyParen (prec >= appPrec) $ pPrintPrec leve
 pPrintPrecApps :: (Pretty a, Pretty b) => PrettyLevel -> Rational -> a -> [b] -> Doc
 pPrintPrecApps level prec e1 es2 = prettyParen (not (null es2) && prec >= appPrec) $ pPrintPrec level opPrec e1 <+> hsep (map (pPrintPrec level appPrec) es2)
 
+pPrintPrecLetRec :: (Pretty a, Pretty b, Pretty c) => PrettyLevel -> Rational -> [(a, b)] -> c -> Doc
+pPrintPrecLetRec level prec xes e_body
+  | [] <- xes = pPrintPrec level prec e_body
+  | otherwise = prettyParen (prec > noPrec) $ hang (if level == haskellLevel then text "let" else text "letrec") 2 (vcat [pPrintPrec level noPrec x <+> text "=" <+> pPrintPrec level noPrec e | (x, e) <- xes]) $$ text "in" <+> pPrintPrec level noPrec e_body
+
 
 angles, coangles, bananas :: Doc -> Doc
 angles d = Pretty.char '<' <> d <> Pretty.char '>'

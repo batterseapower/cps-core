@@ -22,6 +22,7 @@ import Utilities
 -- NB: the input type must be of a TypeKind kind
 -- NB: the type returned is the *unlifted* version of the type
 -- NB: may return multiple types for unboxed tuples
+-- NB: do not look through newtypes here or we may produce an infinite type
 fromType :: G.Type -> [Type]
 fromType (G.ForAllTy _ ty) = fromType ty
 fromType ty = case G.splitTyConAppTy_maybe ty of
@@ -94,17 +95,18 @@ renameLifted subst x = case rename subst x of
     Nothing -> error "renameLifted: binding not lifted"
 
 renameIdBinder :: Context -> Subst -> G.Id -> (Context, Subst, Maybe Id)
-renameIdBinder (ids, iss) subst x = case fromTypeThunky (G.idType x) of
-    []   -> ((ids, iss),  insertUniqueMap x Nothing           subst, Nothing)
-    [ty] -> ((ids, iss'), insertUniqueMap x (Just (IdOcc x')) subst, Just x')
-      where n = G.idName x
-            (iss', n') = uniqAwayName iss n
-            x' = Id { idName = n', idType = ty } -- NB: don't need to rename types
-    _ -> error "renameBinder: unboxed tuple binders are always dead"
+renameIdBinder ids subst x = (ids', insertUniqueMap x (fmap IdOcc mb_x') subst, mb_x')
+  where
+    (ids', mb_x') = renameIdBinder' ids x
 
-renameVarBinder :: Context -> Subst -> G.Var -> (Context, Subst, Maybe Id)
-renameVarBinder ids subst (G.AnId x)   = renameIdBinder ids subst x
-renameVarBinder ids subst (G.ATyVar _) = (ids, subst, Nothing)
+    renameIdBinder' :: Context -> G.Id -> (Context, Maybe Id)
+    renameIdBinder' (ids, iss) x = case fromTypeThunky (G.idType x) of
+        []   -> ((ids, iss),  Nothing)
+        [ty] -> ((ids, iss'), Just x')
+          where n = G.idName x
+                (iss', n') = uniqAwayName iss n
+                x' = Id { idName = n', idType = ty } -- NB: don't need to rename types
+        _ -> error "renameIdBinder': unboxed tuple binders are always dead"
 
 --renameBinders :: Context -> Subst -> [G.Id] -> (Context, Subst, [Maybe Id])
 --renameBinders ids subst = third3 catMaybes . mapAccumL (\(ids, subst) x -> case renameBinder ids subst x of (ids, subst, mb_x') -> ((ids, subst, mb_x'))) (ids, subst)
@@ -156,13 +158,13 @@ fromTerm ids0 (subst, G.Value v) u = case v of
            (ids2, subst', mb_x') = renameIdBinder ids1 subst x
            (ids3, w) = freshCoId ids2 "w" (fromType (G.termType e))
            f = Function (maybeToList mb_x') [w] (fromTerm ids3 (subst', e) (Unknown w))
-    G.Data dc _ xs
+    G.Data dc _ _ xs
       | Just _ <- G.isUnboxedTupleTyCon_maybe (G.dataConTyCon dc)
       -> returnToKont u ids0 (mapMaybe (rename subst) xs)
       | otherwise
       -> addFunction y f (returnToKont u ids1 [IdOcc y])
       where dcs = G.dataConFamily dc
-            ListPoint tys_lefts _tys_here tys_rights = fmap (concatMap typeFromVar . G.dataConBinders) $ locateListPoint (==dc) dcs
+            ListPoint tys_lefts _tys_here tys_rights = fmap (concatMap fromTypeThunky . G.dataConFields) $ locateListPoint (==dc) dcs
             f = Box tys_lefts (mapMaybe (rename subst) xs) tys_rights
             (ids1, y) = freshId ids0 "data" (functionType f)
     G.Literal l -> returnToKont u ids0 [Literal l]
@@ -171,17 +173,23 @@ fromTerm ids (subst, G.TyApp e _) u = fromTerm ids (subst, e) u
 fromTerm ids (subst, G.PrimOp pop es) u = foldr (\e known ids ts -> fromTerm ids (subst, e) $ Known (fromType (G.termType e)) $ \ids extra_ts -> known ids (ts ++ extra_ts))
                                                 (\ids ts -> bindKont u ids $ \_ u -> Term [] [] (Call (PrimOp pop) ts [u])) es ids []
 fromTerm ids0 (subst, G.Case e _ x alts) u
-  | [(G.DataAlt dc xs, e_alt)] <- alts
+  | [(G.DataAlt dc _ xs, e_alt)] <- alts
   , Just _ <- G.isUnboxedTupleTyCon_maybe (G.dataConTyCon dc)
-  = fromTerm ids0 (subst, e) $ Known (concatMap typeFromVar xs) $ \ids0 ts -> fromTerm ids0 (foldr (uncurry insertUniqueMap) subst (concatMap fromVar xs `zip` map Just ts), e_alt) u
+  , let combine []     [] = []
+        combine (x:xs) ts = case fromTypeThunky (G.idType x) of
+          []                 -> (x, Nothing) : combine xs ts
+          [_] | (t:ts) <- ts -> (x, Just t)  : combine xs ts
+          _ -> error "combine: binder, but no matching trivials"
+        combine [] (_:_) = error "combine: not enough trivials"
+  = fromTerm ids0 (subst, e) $ Known (fromType (G.idType x)) $ \ids0 ts -> fromTerm ids0 (foldr (uncurry insertUniqueMap) subst (combine xs ts), e_alt) u
     
   | otherwise
   = fromTerm ids0 (subst, e) $ Known (fromType (G.idType x)) $ \ids0 ts -> let subst' = insertUniqueMap x (if G.typeKind (G.idType x) /= G.LiftedTypeKind then listToMaybe ts else Just (Pun (case ts of [t] -> t))) subst in case alts of
-      [(G.DefaultAlt, e)]                                           -> fromTerm ids0 (subst', e) u
-      ((G.DefaultAlt, e_def):(G.DataAlt dc xs, e):alts) | [t] <- ts -> fromAlts (selectData t)    ids0 subst' (Just e_def) ((dc, (xs, e)):[(dc, (xs, e)) | (G.DataAlt dc xs, e) <- alts]) u
-      ((G.DataAlt dc xs, e):alts)                       | [t] <- ts -> fromAlts (selectData t)    ids0 subst' Nothing      ((dc, (xs, e)):[(dc, (xs, e)) | (G.DataAlt dc xs, e) <- alts]) u
-      ((G.DefaultAlt, e_def):(G.LiteralAlt l, e):alts)  | [t] <- ts -> fromAlts (selectLiteral t) ids0 subst' (Just e_def) ((l, ([], e)):[(l, ([], e)) | (G.LiteralAlt l, e) <- alts]) u
-      ((G.LiteralAlt l, e):alts)                        | [t] <- ts -> fromAlts (selectLiteral t) ids0 subst' Nothing      ((l, ([], e)):[(l, ([], e)) | (G.LiteralAlt l, e) <- alts]) u
+      [(G.DefaultAlt, e)]                                             -> fromTerm ids0 (subst', e) u
+      ((G.DefaultAlt, e_def):(G.DataAlt dc _ xs, e):alts) | [t] <- ts -> fromAlts (selectData t)    ids0 subst' (Just e_def) ((dc, (xs, e)):[(dc, (xs, e)) | (G.DataAlt dc _ xs, e) <- alts]) u
+      ((G.DataAlt dc _ xs, e):alts)                       | [t] <- ts -> fromAlts (selectData t)    ids0 subst' Nothing      ((dc, (xs, e)):[(dc, (xs, e)) | (G.DataAlt dc _ xs, e) <- alts]) u
+      ((G.DefaultAlt, e_def):(G.LiteralAlt l, e):alts)    | [t] <- ts -> fromAlts (selectLiteral t) ids0 subst' (Just e_def) ((l, ([], e)):[(l, ([], e)) | (G.LiteralAlt l, e) <- alts]) u
+      ((G.LiteralAlt l, e):alts)                          | [t] <- ts -> fromAlts (selectLiteral t) ids0 subst' Nothing      ((l, ([], e)):[(l, ([], e)) | (G.LiteralAlt l, e) <- alts]) u
 fromTerm ids0 (subst0, G.LetRec xes e) u = e'
   where (ids3, subst2, e') = foldr (\(x, e) (ids1, subst0, e') -> let (ids2, subst1, Just x') = renameIdBinder ids1 subst0 x
                                                                       ty = fromLiftedType (G.termType e)
@@ -212,6 +220,15 @@ fromTerm ids (subst, G.Cast e _) u = fromTerm ids (subst, e) u
  -- Even worse, since x is hidden by a lambda:
  --  \(y :: Int) -> let x :: F Int = (\(x :: Int) -> x) |> (co :: (Int -> Int) ~ F Int)
  --                 in (\(x :: F Int) -> x |> (sym co) y) x
+ --
+ -- One other thing we have to be careful about is recursive types:
+ --  f :: Rec = (\(x :: Int) -> f) |> (nt_ax :: (Int -> Rec) ~ Rec)
+ --
+ -- Translating to:
+ --  f :: * = (\(x :: *) -> f) :: * -> *
+ --
+ -- From this, it is clear that we could -- but *should not* -- update let-binder types from the type of
+ -- their RHSs, since we can iterate this forever and build infinite arbitrarily large types.
 
 selectData :: Trivial -> CoId -> [(G.DataCon, CoId)] -> Term
 selectData t u_def dcs_us = Term [] [] (Call t [] [lookup dc dcs_us `orElse` u_def | dc <- dc_family])
@@ -229,7 +246,7 @@ fromVar (G.AnId x)   = fromId x
 fromVar (G.ATyVar _) = []
 
 fromAlts :: (CoId -> [(a, CoId)] -> Term)
-         -> Context -> Subst -> Maybe G.Term -> [(a, ([G.Var], G.Term))] -> Kont -> Term
+         -> Context -> Subst -> Maybe G.Term -> [(a, ([G.Id], G.Term))] -> Kont -> Term
 fromAlts select ids0 subst mb_def selectors_alts u = bindKont u ids0 fromAlts'
   where 
     fromAlts' ids0 u = e2
@@ -240,6 +257,6 @@ fromAlts select ids0 subst mb_def selectors_alts u = bindKont u ids0 fromAlts'
             Just e  -> ((ids1, Just w), addContinuation w (Continuation [] (fromTerm ids2 (subst, e) (Unknown u))) e0)
               where (ids1, w) = freshCoId ids0 "w" (fromType (G.termType e))
         ((ids2, e2), selector_us) = mapAccumL (\(ids1, e1) (selector, (xs, e)) -> let (ids2a, w)  = freshCoId ids1 "w" (fromType (G.termType e))
-                                                                                      (ids2b, subst', mb_ys) = renameBinders renameVarBinder ids2a subst xs
+                                                                                      (ids2b, subst', mb_ys) = renameBinders renameIdBinder ids2a subst xs
                                                                                   in ((ids2b, addContinuation w (Continuation (catMaybes mb_ys) (fromTerm ids2 (subst', e) (Unknown u))) e1), (selector, w)))
                                               (ids1, e1) selectors_alts

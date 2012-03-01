@@ -443,6 +443,9 @@ seperate c = go []
       | x == c    = reverse sofar : go [] xs
       | otherwise = go (x:sofar) xs
 
+allDistinct :: Ord a => [a] -> Bool
+allDistinct xs = S.size (S.fromList xs) == length xs
+
 
 accumL :: (acc -> (acc, a)) -> acc -> Int -> (acc, [a])
 accumL f = go

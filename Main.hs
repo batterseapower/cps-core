@@ -17,12 +17,12 @@ import qualified Data.Set as S
 import qualified Data.Map as M
 
 
-example :: G.Term
-example = G.Case (G.Value (G.Literal (Int 2))) intHashTy two [(G.DefaultAlt,
-                G.LetRec [(lifted_id,  G.Value (G.Lambda (G.ATyVar a) (G.Value (G.Lambda (G.AnId x) (G.Var x))))),
-                          (prim_id', G.Value (G.Lambda (G.AnId y) (G.Var y))),
-                          (prim_id, G.Var lifted_id `G.TyApp` G.idType prim_id' `G.App` prim_id')] $
-                         G.PrimOp Add [G.PrimOp Add [G.Value (G.Literal (Int 1)), G.Var prim_id `G.App` two], G.Var prim_id `G.App` two])] -- Use prim_id twice to test thunk update works
+functionExample :: G.Term
+functionExample = G.Case (G.Value (G.Literal (Int 2))) intHashTy two [(G.DefaultAlt,
+                    G.LetRec [(lifted_id,  G.Value (G.Lambda (G.ATyVar a) (G.Value (G.Lambda (G.AnId x) (G.Var x))))),
+                              (prim_id', G.Value (G.Lambda (G.AnId y) (G.Var y))),
+                              (prim_id, G.Var lifted_id `G.TyApp` G.idType prim_id' `G.App` prim_id')] $
+                             G.PrimOp Add [G.PrimOp Add [G.Value (G.Literal (Int 1)), G.Var prim_id `G.App` two], G.Var prim_id `G.App` two])] -- Use prim_id twice to test thunk update works
   where
     [a_n, id_n, prim_id_n, prim_id_n', x_n, y_n, two_n] = shadowyNames ["a", "id", "prim_id", "prim_id'", "x", "y", "two"]
     a = G.TyVar { G.tyVarName = a_n, G.tyVarKind = G.LiftedTypeKind }
@@ -35,12 +35,12 @@ example = G.Case (G.Value (G.Literal (Int 2))) intHashTy two [(G.DefaultAlt,
 
 
 dataExample :: G.Term
-dataExample = G.Case (G.Value (G.Data G.trueDataCon [] [])) intHashTy true [
-                (G.DefaultAlt,               G.Value (G.Literal (Int 1))),
-                (G.DataAlt G.trueDataCon [], G.LetRec [(one, G.Value (G.Literal (Int 1))),
-                                                       (unboxy_fun, G.Value (G.Lambda (G.AnId one) (G.Value (G.Data (G.unboxedTupleDataCon 2) [G.intHashTy, G.boolTy] [one, true]))))] $
-                                             G.Case (G.Var unboxy_fun `G.App` one) G.intHashTy unbx [
-                                                                (G.DataAlt (G.unboxedTupleDataCon 2) [G.AnId x, G.AnId y], G.Var x)])]
+dataExample = G.Case (G.Value (G.Data G.trueDataCon [] [] [])) intHashTy true [
+                (G.DefaultAlt,                  G.Value (G.Literal (Int 1))),
+                (G.DataAlt G.trueDataCon [] [], G.LetRec [(one, G.Value (G.Literal (Int 1))),
+                                                          (unboxy_fun, G.Value (G.Lambda (G.AnId one) (G.Value (G.Data (G.unboxedTupleDataCon 2) [G.intHashTy, G.boolTy] [] [one, true]))))] $
+                                                G.Case (G.Var unboxy_fun `G.App` one) G.intHashTy unbx [
+                                                                   (G.DataAlt (G.unboxedTupleDataCon 2) [] [x, y], G.Var x)])]
   where
     [true_n, one_n, unbx_n, unboxy_fun_n, x_n, y_n] = shadowyNames ["true", "one", "unbx", "unboxy_fun", "x", "y"]
     true = G.Id { G.idName = true_n, G.idType = G.boolTy }
@@ -52,7 +52,8 @@ dataExample = G.Case (G.Value (G.Data G.trueDataCon [] [])) intHashTy true [
 
 
 the_example :: G.Term
-the_example = dataExample
+the_example = functionExample
+--the_example = dataExample
 
 
 main :: IO ()
@@ -60,7 +61,10 @@ main = do
     ids <- initUniqueSupply 'x'
     let (ids', halt_n) = freshName ids "halt"
         halt = CoId { coIdName = halt_n, coIdType = [IntHashTy] }
-        steps e = map stateToTerm $ s : unfoldr (fmap (\x -> (x, x)) . step) s
+        steps e = e : unfoldr (\s -> let e = stateToTerm s
+                                     in case runLintM (lintTerm emptyUniqueMap (insertUniqueMap halt_n [IntHashTy] emptyUniqueMap) e) of
+                                          []   -> fmap ((,) e) (step s)
+                                          errs -> error (unlines (map pPrintRender errs))) s
           where s = (mkInScopeSet (S.singleton halt_n), M.empty, (substFromCoIdSubst (mkCoIdSubst (S.singleton halt)), e), [])
     putStrLn $ pPrintRender the_example
     mapM_ (putStrLn . pPrintRender) $ steps $ fromTerm (ids', emptyInScopeSet) (emptyUniqueMap, the_example) (Unknown halt)

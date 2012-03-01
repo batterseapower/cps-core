@@ -6,12 +6,13 @@ import GHC.Data
 import GHC.Type
 import GHC.Primitives
 import GHC.Var
+import GHC.Kind
 
 import Name
 import Utilities
 
 
-data AltCon = DataAlt DataCon [Var] | LiteralAlt Literal | DefaultAlt
+data AltCon = DataAlt DataCon [TyVar] [Id] | LiteralAlt Literal | DefaultAlt
             deriving (Eq, Show)
 
 -- Note [Case wildcards]
@@ -63,7 +64,7 @@ data Term = Var Id
 
 type Alt = (AltCon, Term)
 
-data Value = Coercion Coercion | Lambda Var Term | Data DataCon [Type] [Id] | Literal Literal
+data Value = Coercion Coercion | Lambda Var Term | Data DataCon [Type] [Type] [Id] | Literal Literal
             deriving (Eq, Show)
 
 instance Pretty Term where
@@ -88,19 +89,19 @@ pPrintPrecCast level prec e co = prettyParen (prec >= appPrec) $ pPrintPrec leve
 
 instance Pretty AltCon where
     pPrintPrec level prec altcon = case altcon of
-        DataAlt dc xs -> prettyParen (prec >= appPrec) $ pPrintPrec level noPrec dc <+> hsep (map (pPrintPrec level appPrec) xs)
-        LiteralAlt l  -> pPrint l
-        DefaultAlt    -> text "_"
+        DataAlt dc xtys xs -> prettyParen (prec >= appPrec) $ pPrintPrec level noPrec dc <+> hsep (map (pPrintPrec level appPrec) xtys ++ map (pPrintPrec level appPrec) xs)
+        LiteralAlt l       -> pPrint l
+        DefaultAlt         -> text "_"
 
 instance Pretty Value where
     pPrintPrec level prec v = case v of
         -- Unfortunately, this nicer pretty-printing doesn't work for general (TermF ann):
         --Lambda x e    -> pPrintPrecLam level prec (x:xs) e'
         --  where (xs, e') = collectLambdas e
-        Lambda x e     -> pPrintPrecLams level prec [x] e
-        Data dc tys xs -> pPrintPrecApps level prec dc (map asPrettyFunction tys ++ map asPrettyFunction xs)
-        Literal l      -> pPrintPrec level prec l
-        Coercion co    -> pPrintPrec level prec co
+        Lambda x e           -> pPrintPrecLams level prec [x] e
+        Data dc utys xtys xs -> pPrintPrecApps level prec dc (map asPrettyFunction utys ++ map asPrettyFunction xtys ++ map asPrettyFunction xs)
+        Literal l            -> pPrintPrec level prec l
+        Coercion co          -> pPrintPrec level prec co
 
 pPrintPrecLams :: Pretty a => PrettyLevel -> Rational -> [Var] -> a -> Doc
 pPrintPrecLams level prec xs e = prettyParen (prec > noPrec) $ text "\\" <> hsep [pPrintPrec level appPrec y | y <- xs] <+> text "->" <+> pPrintPrec level noPrec e
@@ -127,10 +128,10 @@ termType (LetRec _ e) = termType e
 termType (Cast _ co) = snd $ coercionType' co
 
 valueType :: Value -> Type
-valueType (Coercion co)    = coercionType co
-valueType (Lambda x e)     = mkPiTy x (termType e)
-valueType (Data dc tys xs) = nTimes (length xs) funResTy $ foldl' instTy (dataConType dc) tys
-valueType (Literal l)      = literalType l
+valueType (Coercion co)          = coercionType co
+valueType (Lambda x e)           = mkPiTy x (termType e)
+valueType (Data dc utys xtys xs) = nTimes (length xs) funResTy $ foldl' instTy (dataConType dc) (utys ++ xtys)
+valueType (Literal l)            = literalType l
 
 literalType :: Literal -> Type
 literalType (Int _) = intHashTy

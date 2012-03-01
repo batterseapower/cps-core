@@ -38,6 +38,12 @@ infixr 7 `mkFunTy`
 mkFunTy :: Type -> Type -> Type
 mkFunTy ty1 ty2 = mkTyConAppTy funTyCon [ty1, ty2]
 
+mkFunTys :: [Type] -> Type -> Type
+mkFunTys tys ty = foldr mkFunTy ty tys
+
+mkForAllTys :: [TyVar] -> Type -> Type
+mkForAllTys tvs ty = foldr ForAllTy ty tvs
+
 splitFunTy_maybe :: Type -> Maybe (Type, Type)
 splitFunTy_maybe ty = case splitTyConAppTy_maybe ty of
     Just (tc, [ty1, ty2]) | tc == funTyCon -> Just (ty1, ty2)

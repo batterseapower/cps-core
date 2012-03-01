@@ -17,10 +17,10 @@ infixr 7 `FunTy`
 data Type = IntHashTy
           | PtrTy
           | FunTy FunTyArg [CoType]
-          deriving (Show)
+          deriving (Eq, Show)
 
 data FunTyArg = BoxTy | NonBoxTy [Type]
-              deriving (Show)
+              deriving (Eq, Show)
 
 mkBoxTy :: [CoType] -> Type
 mkBoxTy ntys = FunTy BoxTy ntys
@@ -91,6 +91,7 @@ data Trivial = IdOcc Id
 --  * No need to update things that are already values: perhaps we can do this by evaluating an update directly in the RHS of the updatee at compile time.
 --    Note that if we start shifting updates around we can't just evaluate *any* update whenever we see an update to a let-bound thing, because there may
 --    be two syntactically distinct updates to the same variable e.g. after simplifying (let x = case y of A -> B; B -> A in case x of A -> e1; B -> e2)
+--  * Updating a pun can just be dropped (NB: check this makes sense)
 --  * Continuations should be floated as far in as possible because that ensures they are syntactically nested within their dominators, which
 --    can expose information available at all call sites
 --  * We can do pun introduction: we can simplify x <> (\<x'>. e) to x <> (\<x'>. e[pun x'/x]). This is one of the rules where floating continuations
@@ -173,6 +174,104 @@ pPrintPrecAlty level _    xs  = angles (hcat (intersperse (text "|") [pPrintPrec
 
 pPrintPrecLams :: (Pretty a, Pretty b) => PrettyLevel -> Rational -> [a] -> b -> Doc
 pPrintPrecLams level prec xs e = prettyParen (prec > noPrec) $ text "\\" <> hsep [pPrintPrec level appPrec y | y <- xs] <+> text "->" <+> pPrintPrec level noPrec e
+
+
+newtype LintM a = LintM { unLintM :: [Doc] -> ([Doc], a) }
+
+instance Monad LintM where
+    return x = LintM $ \doc -> (doc, x)
+    mx >>= fxmy = LintM $ \doc -> case unLintM mx doc of (doc, x) -> unLintM (fxmy x) doc
+
+runLintM :: LintM () -> [Doc]
+runLintM mx = case unLintM mx [] of (docs, ()) -> docs
+
+warnM :: [Doc] -> LintM ()
+warnM xs = LintM $ \docs -> (xs ++ docs, ())
+
+lintDistinct :: (Pretty a, Ord a) => Doc -> [a] -> LintM ()
+lintDistinct what xs = warnM [what <+> text "not distinct: " <+> pPrint xs | allDistinct xs == False]
+
+lintTerm :: UniqueMap Type -> UniqueMap CoType -> Term -> LintM ()
+lintTerm x_tys u_ntys (Term xfs uks r) = do
+    x_tys  <- lintIdBinders   x_tys  (map fst xfs)
+    u_ntys <- lintCoIdBinders u_ntys (map fst uks)
+    mapM_ (uncurry (lintFunction     x_tys))        xfs
+    mapM_ (uncurry (lintContinuation x_tys u_ntys)) uks
+    lintTransfer x_tys u_ntys r
+
+lintIdBinders :: UniqueMap Type -> [Id] -> LintM (UniqueMap Type)
+lintIdBinders x_tys xs = do
+    lintDistinct (text "Id binders") xs
+    return x_tys'
+  where x_tys' = foldr (\x -> insertUniqueMap x (idType x)) x_tys xs
+
+lintCoIdBinders :: UniqueMap CoType -> [CoId] -> LintM (UniqueMap CoType)
+lintCoIdBinders u_ntys us = do
+    lintDistinct (text "CoId binders") us
+    return u_ntys'
+  where u_ntys' = foldr (\u -> insertUniqueMap u (coIdType u)) u_ntys us
+
+lintFunction :: UniqueMap Type -> Id -> Function -> LintM ()
+lintFunction x_tys x f = do
+    case f of Function xs us e -> do
+                x_tys  <- lintIdBinders   x_tys          xs
+                u_ntys <- lintCoIdBinders emptyUniqueMap us
+                lintTerm x_tys u_ntys e
+              Box _ ts _ -> mapM_ (lintTrivial x_tys) ts
+    warnM [hang (pPrint x <+> text "RHS type incompatible") 2
+            (text "Bound as:" <+> pPrint (idType x) $$
+             text "RHS is:" <+> pPrint (functionType f))
+          | not (functionType f `subType` idType x)]
+
+lintContinuation :: UniqueMap Type -> UniqueMap CoType -> CoId -> Continuation -> LintM ()
+lintContinuation x_tys u_ntys u k@(Continuation xs e) = do
+    x_tys <- lintIdBinders x_tys xs
+    lintTerm x_tys u_ntys e
+    warnM [hang (pPrint u <+> text "RHS cotype incompatible") 2
+            (text "Bound as:" <+> pPrint (coIdType u) $$
+             text "RHS is:" <+> pPrint (continuationCoType k))
+          | not (allR subType (coIdType u) (continuationCoType k))]
+
+lintTransfer :: UniqueMap Type -> UniqueMap CoType -> Transfer -> LintM ()
+lintTransfer x_tys u_ntys (Return u ts) = do
+    lintCoId u_ntys u
+    mapM_ (lintTrivial x_tys) ts
+    warnM [hang (pPrint u <+> text "return type incompatible:") 2
+            (text "Applied:" <+> pPrint ts <+> text "::" <+> pPrint (map trivialType ts) $$
+             text "Expected:" <+> pPrint (coIdType u))
+          | not (allR subType (map trivialType ts) (coIdType u))]
+lintTransfer x_tys u_ntys (Call t ts us) = do
+    lintTrivial x_tys t
+    mapM_ (lintTrivial x_tys) ts
+    mapM_ (lintCoId u_ntys) us
+    ntys <- case trivialType t of
+      FunTy BoxTy          ntys -> do
+        warnM [pPrint t <+> text "unpack call with non-null value arguments" | not (null ts)]
+        return ntys
+      FunTy (NonBoxTy tys) ntys -> do
+        warnM [hang (pPrint t <+> text "call arguments incompatible:") 2
+                (text "Applied:" <+> pPrint ts <+> text "::" <+> pPrint (map trivialType ts) $$
+                 text "Expected:" <+> pPrint tys)
+              | not (allR subType (map trivialType ts) tys)]
+        return ntys
+    warnM [hang (pPrint t <+> text "call result incompatible:") 2
+            (text "Applied:" <+> pPrint us <+> text "::" <+> pPrint (map coIdType us) $$
+             text "Expected:" <+> pPrint ntys)
+          | not (allR (allR subType) (map coIdType us) ntys)]
+
+lintTrivial :: UniqueMap Type -> Trivial -> LintM ()
+lintTrivial x_tys (IdOcc x) = case lookupUniqueMap x x_tys of
+    Nothing   -> warnM [pPrint x <+> text "out of scope"]
+    Just x_ty -> warnM [pPrint x <+> text "occurrence type not up to date" | x_ty /= idType x]
+lintTrivial x_tys (Pun t) = lintTrivial x_tys t
+lintTrivial _ (Literal _)    = return ()
+lintTrivial _ (PrimOp _)     = return ()
+lintTrivial _ (Update _ _ _) = return ()
+
+lintCoId :: UniqueMap CoType -> CoId -> LintM ()
+lintCoId u_ntys u = case lookupUniqueMap u u_ntys of
+    Nothing   -> warnM [pPrint u <+> text "out of scope"]
+    Just u_ty -> warnM [pPrint u <+> text "occurrence type not up to date" | u_ty /= coIdType u]
 
 
 literalType :: Literal -> Type

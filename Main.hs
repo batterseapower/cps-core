@@ -35,12 +35,12 @@ functionExample = G.Case (G.Value (G.Literal (Int 2))) intHashTy two [(G.Default
 
 
 dataExample :: G.Term
-dataExample = G.Case (G.Value (G.Data G.trueDataCon [] [] [])) intHashTy true [
-                (G.DefaultAlt,                  G.Value (G.Literal (Int 1))),
-                (G.DataAlt G.trueDataCon [] [], G.LetRec [(one, G.Value (G.Literal (Int 1))),
-                                                          (unboxy_fun, G.Value (G.Lambda (G.AnId one) (G.Value (G.Data (G.unboxedTupleDataCon 2) [G.intHashTy, G.boolTy] [] [one, true]))))] $
-                                                G.Case (G.Var unboxy_fun `G.App` one) G.intHashTy unbx [
-                                                                   (G.DataAlt (G.unboxedTupleDataCon 2) [] [x, y], G.Var x)])]
+dataExample = G.Case (G.Value (G.Literal (Int 1))) intHashTy one [(G.DefaultAlt,
+                G.Case (G.Value (G.Data G.trueDataCon [] [] [])) intHashTy true [
+                  (G.DefaultAlt,                  G.Value (G.Literal (Int 1))),
+                  (G.DataAlt G.trueDataCon [] [], G.LetRec [(unboxy_fun, G.Value (G.Lambda (G.AnId one) (G.Value (G.Data (G.unboxedTupleDataCon 2) [G.intHashTy, G.boolTy] [] [one, true]))))] $
+                                                  G.Case (G.Var unboxy_fun `G.App` one) G.intHashTy unbx [
+                                                                     (G.DataAlt (G.unboxedTupleDataCon 2) [] [x, y], G.Var x)])])]
   where
     [true_n, one_n, unbx_n, unboxy_fun_n, x_n, y_n] = shadowyNames ["true", "one", "unbx", "unboxy_fun", "x", "y"]
     true = G.Id { G.idName = true_n, G.idType = G.boolTy }
@@ -52,8 +52,8 @@ dataExample = G.Case (G.Value (G.Data G.trueDataCon [] [] [])) intHashTy true [
 
 
 the_example :: G.Term
-the_example = functionExample
---the_example = dataExample
+--the_example = functionExample
+the_example = dataExample
 
 
 main :: IO ()

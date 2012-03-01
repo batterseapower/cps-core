@@ -88,7 +88,7 @@ data Trivial = IdOcc Id
 -- NB: interesting simplification rule: call to something of boxed type with single no-args cont can be simplified to a call to that cont
 -- NB: interesting simplification rule: no need to update things that are already values/evaluate update at compile time
 
--- FIXME: have a CoTrivial with a polymorphic "unreachable" and monotyped "halt"?
+-- FIXME: have a CoTrivial with a polymorphic "unreachable" and "blackhole" (useful if moving update out of a thunk itself), as well as monotyped "halt"?
 
 data Function = Function [Id] [CoId] Term | Box [CoType] [Trivial] [CoType]
               deriving (Show)

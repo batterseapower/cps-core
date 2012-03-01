@@ -13,6 +13,11 @@ import GHC.Primitives
 import Name
 import Utilities
 
+-- FIXME: it might be easier to just permit unboxed tuples everywhere, including inside other unboxed tuples and on the left-hand-side of function arrows.
+--        The only wrinkle is that fromId may have to manufacture some fresh names.
+-- FIXME: we can even permit unboxed tuples as e.g. arguments to (,)! Of course, you can't use such types as arguments to polymorphic functions (ill-kinded type application).
+--        In GHC we would also have to be careful about what info tables such things get -- we can't reuse the polymorphic one (closure layout will change).
+
 
 -- NB: the input type must be of a TypeKind kind
 -- NB: the type returned is the *unlifted* version of the type
@@ -39,6 +44,9 @@ fromType ty = case G.splitTyConAppTy_maybe ty of
         -- GHC currently has a bug where you can lambda-abstract over type variables of non-lifted kind.
         -- This is a serious problem because there is no way to reliably determine the representation of
         -- that type variable. This becomes explicit in our translation.
+        --
+        -- FIXME: we should allow such types in *result* positions (e.g. for error :: forall (a :: OPEN). a).
+        -- In this case, we can return [] on the understanding that such functions can never return.
 
 -- NB: the input type must be lifted
 fromLiftedType :: G.Type -> Type
@@ -131,7 +139,7 @@ returnToKont (Known _ f) ids ts = f ids ts
 
 bindKont :: Kont -> Context -> (Context -> CoId -> Term) -> Term
 bindKont (Unknown u)   ids  nested =                      nested ids  u
-bindKont (Known tys f) ids0 nested = addContinuation u k (nested ids2 u)
+bindKont (Known tys f) ids0 nested = addContinuation u k (nested ids2 u) -- FIXME: should tys come from bindCont caller? (Casts)
   where k = Continuation xs (f ids2 (map IdOcc xs))
         (ids1, u)  = freshCoId ids0 "u" (continuationCoType k)
         (ids2, xs) = freshs freshId ids1 "x" tys
@@ -180,7 +188,30 @@ fromTerm ids0 (subst0, G.LetRec xes e) u = e'
                                                                       (ids3, w) = freshCoId ids2 "w" [ty]
                                                                   in (ids2, subst1, addFunction x' (Function [] [w] (fromTerm ids3 (subst2, e) (Known [ty] $ \_ [t] -> Term [] [] (Call (Update [] (coIdType w) []) [IdOcc x', t] [w])))) e'))
                                    (ids0, subst0, fromTerm ids3 (subst2, e) u) xes
-fromTerm ids (subst, G.Cast e _) u = fromTerm ids (subst, e) u -- FIXME: I'm a bit worried about the type-precision consequences of this! Does this kill typeability of the output?
+fromTerm ids (subst, G.Cast e _) u = fromTerm ids (subst, e) u
+ -- FIXME: I'm a bit worried about the type-precision consequences of this -- dropping casts may kill typeability of the output!
+ --
+ -- Consider:
+ --  \(y :: Int) -> let x :: F Int = (\(x :: Int) -> x) |> (co :: (Int -> Int) ~ F Int)
+ --                 in x |> (sym co) y
+ --
+ -- Which would naively translate to:
+ --  let x :: * = \(x :: *) -> x
+ --  in x y
+ --
+ -- Which is ill typed.
+ --
+ -- How about in CPS-core? (NB: I'm using * to stand for the evaluated form of the lifted type Int)
+ --  let x :: <> -> * = \<> (k :: *) -> let xv :: (<> -> *) -> * = \x k -> x <> k
+ --                                     in k xv
+ --      l :: (<> -> *) -> * = \(xv :: (<> -> *) -> *) -> xv y halt
+ --  in x l
+ --
+ -- This is STILL ill typed -- look at the (x l) application, where l demands more than the x can supply.
+ --
+ -- Even worse, since x is hidden by a lambda:
+ --  \(y :: Int) -> let x :: F Int = (\(x :: Int) -> x) |> (co :: (Int -> Int) ~ F Int)
+ --                 in (\(x :: F Int) -> x |> (sym co) y) x
 
 selectData :: Trivial -> CoId -> [(G.DataCon, CoId)] -> Term
 selectData t u_def dcs_us = Term [] [] (Call t [] [lookup dc dcs_us `orElse` u_def | dc <- dc_family])

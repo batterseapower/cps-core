@@ -38,10 +38,3 @@ mkPiTy (ATyVar a) = (a `ForAllTy`)
 
 mkPiTys :: [Var] -> Type -> Type
 mkPiTys xs ty = foldr mkPiTy ty xs
-
-instPiTy :: Type -> Var -> Type
-instPiTy ty (AnId _)   = funResTy ty
-instPiTy ty (ATyVar a) = instTy ty (TyVarTy a)
-
-instPiTys :: Type -> [Var] -> Type
-instPiTys = foldl' instPiTy

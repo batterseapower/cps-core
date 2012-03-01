@@ -86,8 +86,15 @@ data Trivial = IdOcc Id
              deriving (Show)
 -- FIXME: add "blackhole"/"update-with-bh" primop (useful if moving update out of a thunk itself statically, as well as at runtime)
 
--- NB: interesting simplification rule: call to something of boxed type with single no-args cont can be simplified to a call to that cont
--- NB: interesting simplification rule: no need to update things that are already values/evaluate update at compile time
+-- Interesting simplification rules:
+--  * Call to something of boxy type with a single no-args cont can be simplified to a call to that cont
+--  * No need to update things that are already values: perhaps we can do this by evaluating an update directly in the RHS of the updatee at compile time.
+--    Note that if we start shifting updates around we can't just evaluate *any* update whenever we see an update to a let-bound thing, because there may
+--    be two syntactically distinct updates to the same variable e.g. after simplifying (let x = case y of A -> B; B -> A in case x of A -> e1; B -> e2)
+--  * Continuations should be floated as far in as possible because that ensures they are syntactically nested within their dominators, which
+--    can expose information available at all call sites
+--  * We can do pun introduction: we can simplify x <> (\<x'>. e) to x <> (\<x'>. e[pun x'/x]). This is one of the rules where floating continuations
+--    maximally in is useful.
 
 -- FIXME: have a CoTrivial with a polymorphic "unreachable" as well as monotyped "halt"?
 
@@ -108,12 +115,12 @@ instance Pretty Type where
     pPrintPrec level prec ty = case ty of
       IntHashTy    -> text "Int#"
       PtrTy        -> text "*"
-      FunTy a ntys -> prettyParen (prec >= appPrec) $ pPrintPrec level appPrec a <+> text "->" <+> pPrintPrecMulti level noPrec (text "|") [PrettyFunction $ \level prec -> pPrintPrecMulti level prec (text ",") nty | nty <- ntys]
+      FunTy a ntys -> prettyParen (prec >= appPrec) $ pPrintPrec level appPrec a <+> text "->" <+> pPrintPrecAlty level noPrec [PrettyFunction $ \level prec -> pPrintPrecMulti level prec nty | nty <- ntys]
 
 instance Pretty FunTyArg where
     pPrintPrec level prec a = case a of
       BoxTy         -> text "<!>"
-      NonBoxTy tys  -> pPrintPrecMulti level prec (text ",") tys
+      NonBoxTy tys  -> pPrintPrecMulti level prec tys
 
 instance Pretty Id where
     pPrintPrec level prec = pPrintPrec level prec . idName
@@ -131,11 +138,11 @@ instance Pretty Trivial where
 
 instance Pretty Function where
     pPrintPrec level prec f = case f of
-      Function xs us e   -> pPrintPrecLams level prec [PrettyFunction $ \level prec -> pPrintPrecMulti level prec (text ",") xs, PrettyFunction $ \level prec -> pPrintPrecMulti level prec (text ",") us] e
+      Function xs us e   -> pPrintPrecLams level prec [PrettyFunction $ \level prec -> pPrintPrecMulti level prec xs, PrettyFunction $ \level prec -> pPrintPrecMulti level prec us] e
       Box ntys1 ts ntys2 -> pPrintPrecFunny level prec (text "Box") ntys1 ts ntys2
 
 instance Pretty Continuation where
-    pPrintPrec level prec (Continuation us e) = pPrintPrecLams level prec us e
+    pPrintPrec level prec (Continuation xs e) = pPrintPrecLams level prec [PrettyFunction $ \level prec -> pPrintPrecMulti level prec xs] e
 
 instance Pretty Term where
     pPrintPrec level prec (Term xfs uks r) = pPrintPrecLetRec level prec ([(asPrettyFunction x, asPrettyFunction f) | (x, f) <- xfs] ++ [(asPrettyFunction u, asPrettyFunction k) | (u, k) <- uks]) r
@@ -143,16 +150,26 @@ instance Pretty Term where
 instance Pretty Transfer where
     pPrintPrec level prec r = case r of
       Return u ts -> pPrintPrecApps level prec u ts
-      Call t ts us -> pPrintPrecApps level prec t [PrettyFunction $ \level prec -> pPrintPrecMulti level prec (text ",") ts, PrettyFunction $ \level prec -> pPrintPrecMulti level prec (text ",") us]
+      Call t ts us -> pPrintPrecApps level prec t [PrettyFunction $ \level prec -> pPrintPrecMulti level prec ts, PrettyFunction $ \level prec -> pPrintPrecMulti level prec us]
 
 pPrintPrecFunny :: (Pretty a, Pretty b, Pretty c, Pretty d) => PrettyLevel -> Rational -> a -> [[b]] -> [c] -> [[d]] -> Doc
-pPrintPrecFunny level prec hd ntys1 ts ntys2 = pPrintPrecApps level prec hd $ [PrettyFunction $ \level prec -> pPrintPrecMulti level prec (text ",") nty | nty <- ntys1] ++
-                                                                              [PrettyFunction $ \level prec -> pPrintPrecMulti level prec (text ",") ts] ++
-                                                                              [PrettyFunction $ \level prec -> pPrintPrecMulti level prec (text ",") nty | nty <- ntys2]
+pPrintPrecFunny level prec hd ntys1 ts ntys2 = pPrintPrecApps level prec hd [PrettyFunction $ \level prec -> pPrintPrecAlty level prec $ [PrettyFunction $ \level prec -> pPrintPrecMulti level prec nty | nty <- ntys1] ++
+                                                                                                                                         [PrettyFunction $ \level prec -> text "!" <> pPrintPrecMulti level prec ts] ++
+                                                                                                                                         [PrettyFunction $ \level prec -> pPrintPrecMulti level prec nty | nty <- ntys2]]
 
-pPrintPrecMulti :: Pretty a => PrettyLevel -> Rational -> Doc -> [a] -> Doc
-pPrintPrecMulti level prec _   [x] = pPrintPrec level prec x
-pPrintPrecMulti level _    sep xs  = angles (hsep (punctuate sep [pPrintPrec level noPrec x | x <- xs]))
+pPrintPrecMulti :: Pretty a => PrettyLevel -> Rational -> [a] -> Doc
+pPrintPrecMulti level prec [x] = pPrintPrec level prec x
+pPrintPrecMulti level prec xs  = prettyAngles (prec >= appPrec) $ hsep (punctuate (text ",") [pPrintPrec level noPrec x | x <- xs])
+ -- Experimental pretty-printing change: skip the angle brackets if we can avoid it, so that True is (Box <|!>) rather than (Box <<>|!<>>).
+ -- FIXME: as a consequence we do get (<> -> Int#,Int#) instead of (<> -> <Int#,Int#>), but maybe that is OK?
+
+prettyAngles :: Bool -> Doc -> Doc
+prettyAngles False = id
+prettyAngles True  = angles
+
+pPrintPrecAlty :: Pretty a => PrettyLevel -> Rational -> [a] -> Doc
+pPrintPrecAlty level prec [x] = pPrintPrec level prec x
+pPrintPrecAlty level _    xs  = angles (hcat (intersperse (text "|") [pPrintPrec level noPrec x | x <- xs]))
 
 pPrintPrecLams :: (Pretty a, Pretty b) => PrettyLevel -> Rational -> [a] -> b -> Doc
 pPrintPrecLams level prec xs e = prettyParen (prec > noPrec) $ text "\\" <> hsep [pPrintPrec level appPrec y | y <- xs] <+> text "->" <+> pPrintPrec level noPrec e

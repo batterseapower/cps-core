@@ -63,7 +63,7 @@ data Term = Var Id
 
 type Alt = (AltCon, Term)
 
-data Value = Coercion Coercion | Lambda Var Term | Data DataCon [Var] | Literal Literal
+data Value = Coercion Coercion | Lambda Var Term | Data DataCon [Type] [Id] | Literal Literal
             deriving (Eq, Show)
 
 instance Pretty Term where
@@ -97,10 +97,10 @@ instance Pretty Value where
         -- Unfortunately, this nicer pretty-printing doesn't work for general (TermF ann):
         --Lambda x e    -> pPrintPrecLam level prec (x:xs) e'
         --  where (xs, e') = collectLambdas e
-        Lambda x e    -> pPrintPrecLams level prec [x] e
-        Data dc xs    -> pPrintPrecApps level prec dc xs
-        Literal l     -> pPrintPrec level prec l
-        Coercion co   -> pPrintPrec level prec co
+        Lambda x e     -> pPrintPrecLams level prec [x] e
+        Data dc tys xs -> pPrintPrecApps level prec dc (map asPrettyFunction tys ++ map asPrettyFunction xs)
+        Literal l      -> pPrintPrec level prec l
+        Coercion co    -> pPrintPrec level prec co
 
 pPrintPrecLams :: Pretty a => PrettyLevel -> Rational -> [Var] -> a -> Doc
 pPrintPrecLams level prec xs e = prettyParen (prec > noPrec) $ text "\\" <> hsep [pPrintPrec level appPrec y | y <- xs] <+> text "->" <+> pPrintPrec level noPrec e
@@ -127,10 +127,10 @@ termType (LetRec _ e) = termType e
 termType (Cast _ co) = snd $ coercionType' co
 
 valueType :: Value -> Type
-valueType (Coercion co) = coercionType co
-valueType (Lambda x e)  = mkPiTy x (termType e)
-valueType (Data dc xs)  = instPiTys (dataConType dc) xs
-valueType (Literal l)   = literalType l
+valueType (Coercion co)    = coercionType co
+valueType (Lambda x e)     = mkPiTy x (termType e)
+valueType (Data dc tys xs) = nTimes (length xs) funResTy $ foldl' instTy (dataConType dc) tys
+valueType (Literal l)      = literalType l
 
 literalType :: Literal -> Type
 literalType (Int _) = intHashTy

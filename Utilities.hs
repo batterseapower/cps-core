@@ -570,6 +570,10 @@ orElse :: Maybe a -> a -> a
 orElse = flip fromMaybe
 
 
+nTimes :: Int -> (a -> a) -> a -> a
+nTimes n f = foldr (.) id (replicate n f)
+
+
 takeFirst :: (a -> Bool) -> [a] -> (Maybe a, [a])
 takeFirst p = takeFirstJust (\x -> guard (p x) >> return x)
 

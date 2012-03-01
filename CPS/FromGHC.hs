@@ -148,18 +148,15 @@ fromTerm ids0 (subst, G.Value v) u = case v of
            (ids2, subst', mb_x') = renameIdBinder ids1 subst x
            (ids3, w) = freshCoId ids2 "w" (fromType (G.termType e))
            f = Function (maybeToList mb_x') [w] (fromTerm ids3 (subst', e) (Unknown w))
-    G.Data dc vs
+    G.Data dc _ xs
       | Just _ <- G.isUnboxedTupleTyCon_maybe (G.dataConTyCon dc)
-      -> returnToKont u ids0 (mapMaybe var_occ vs)
+      -> returnToKont u ids0 (mapMaybe (rename subst) xs)
       | otherwise
       -> addFunction y f (returnToKont u ids1 [IdOcc y])
       where dcs = G.dataConFamily dc
             ListPoint tys_lefts _tys_here tys_rights = fmap (concatMap typeFromVar . G.dataConBinders) $ locateListPoint (==dc) dcs
-            f = Box tys_lefts (mapMaybe var_occ vs) tys_rights
+            f = Box tys_lefts (mapMaybe (rename subst) xs) tys_rights
             (ids1, y) = freshId ids0 "data" (functionType f)
-
-            var_occ (G.AnId x)   = rename subst x
-            var_occ (G.ATyVar _) = Nothing
     G.Literal l -> returnToKont u ids0 [Literal l]
 fromTerm ids (subst, G.App e x) u = fromTerm ids (subst, e) $ Known (fromType (G.termType e)) $ \ids [t] -> bindKont u ids $ \_ u -> Term [] [] (Call t (maybeToList (rename subst x)) [u])
 fromTerm ids (subst, G.TyApp e _) u = fromTerm ids (subst, e) u

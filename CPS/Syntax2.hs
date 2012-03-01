@@ -84,11 +84,12 @@ data Trivial = IdOcc Id
              | Pun Trivial
              | Update [CoType] CoType [CoType]
              deriving (Show)
+-- FIXME: add "blackhole" (useful if moving update out of a thunk itself statically, as well as at runtime)
 
 -- NB: interesting simplification rule: call to something of boxed type with single no-args cont can be simplified to a call to that cont
 -- NB: interesting simplification rule: no need to update things that are already values/evaluate update at compile time
 
--- FIXME: have a CoTrivial with a polymorphic "unreachable" and "blackhole" (useful if moving update out of a thunk itself), as well as monotyped "halt"?
+-- FIXME: have a CoTrivial with a polymorphic "unreachable" as well as monotyped "halt"?
 
 data Function = Function [Id] [CoId] Term | Box [CoType] [Trivial] [CoType]
               deriving (Show)
@@ -317,6 +318,8 @@ stateToTerm :: State -> Term
 stateToTerm (iss, h, (subst, e), k) = flip (foldr (\(x, (idsubst, f)) -> addFunction x (renameFunction iss idsubst f))) (M.toList h) $
                                       flip (foldr (\kf -> flip (foldr (\(u, (subst, k)) -> addContinuation u (renameContinuation iss subst k))) (M.toList kf))) k $
                                       renameTerm iss subst e
+
+-- FIXME: blackholing. When we first enter we should blackhole the thunk: x |-> \<> k. blackhole <> <>
 
 -- Principal: it's OK to error out if the term is badly typed, but not if some information is missing
 -- NB: the output type is guaranteed to be a *subtype* of the input type. In representation-type systems

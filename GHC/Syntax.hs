@@ -117,7 +117,7 @@ termType (PrimOp pop es) = case (pop, map termType es) of
       | pop `elem` [Add, Subtract, Multiply, Divide, Modulo]
       , ty1 == intHashTy
       , ty2 == intHashTy
-      -> intTy
+      -> intHashTy
       | pop `elem` [Equal, LessThan, LessThanEqual]
       , ty1 == intHashTy
       , ty2 == intHashTy

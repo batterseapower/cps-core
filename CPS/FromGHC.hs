@@ -255,8 +255,9 @@ fromAlts select ids0 subst mb_def selectors_alts u = bindKont u ids0 fromAlts'
         ((ids1, mb_def_u), e1) = case mb_def of
             Nothing -> ((ids0, Nothing), e0)
             Just e  -> ((ids1, Just w), addContinuation w (Continuation [] (fromTerm ids2 (subst, e) (Unknown u))) e0)
-              where (ids1, w) = freshCoId ids0 "w" (fromType (G.termType e))
-        ((ids2, e2), selector_us) = mapAccumL (\(ids1, e1) (selector, (xs, e)) -> let (ids2a, w)  = freshCoId ids1 "w" (fromType (G.termType e))
+              where (ids1, w) = freshCoId ids0 "w" []
+        ((ids2, e2), selector_us) = mapAccumL (\(ids1, e1) (selector, (xs, e)) -> let k = Continuation (catMaybes mb_ys) (fromTerm ids2 (subst', e) (Unknown u))
+                                                                                      (ids2a, w)  = freshCoId ids1 "w" (continuationCoType k)
                                                                                       (ids2b, subst', mb_ys) = renameBinders renameIdBinder ids2a subst xs
-                                                                                  in ((ids2b, addContinuation w (Continuation (catMaybes mb_ys) (fromTerm ids2 (subst', e) (Unknown u))) e1), (selector, w)))
+                                                                                  in ((ids2b, addContinuation w k e1), (selector, w)))
                                               (ids1, e1) selectors_alts

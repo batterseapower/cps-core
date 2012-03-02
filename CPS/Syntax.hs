@@ -12,51 +12,8 @@ import qualified Data.Set as S
 
 type CoType = [Type]
 
-infixr 7 `FunTy`
-
-data Type = IntHashTy
-          | PtrTy
-          | FunTy FunTyArg [CoType]
+data Type = IntHashTy | PtrTy
           deriving (Eq, Show)
-
-data FunTyArg = BoxTy | NonBoxTy [Type]
-              deriving (Eq, Show)
-
-mkBoxTy :: [CoType] -> Type
-mkBoxTy ntys = FunTy BoxTy ntys
-
-mkNonBoxTy :: [Type] -> [CoType] -> Type
-mkNonBoxTy tys ntys = FunTy (NonBoxTy tys) ntys
-
-boolTy :: Type
-boolTy = mkBoxTy [[], []]
-
-intTy :: Type
-intTy = mkBoxTy [[IntHashTy]]
-
--- x `subType` y if a variable of type x can be applied to a function with argument type y
--- NB: due to the presence of subtyping, types may "improve" during reduction, so we may be able
--- to improve types by reconstructing the types of let-bound arguments and pushing them down to application sites
-subType :: Type -> Type -> Bool
-IntHashTy      `subType` IntHashTy      = True
-IntHashTy      `subType` _              = False
-_              `subType` IntHashTy      = False
-PtrTy          `subType` PtrTy          = True
-PtrTy          `subType` _              = False
-_              `subType` PtrTy          = True
-FunTy a1 ntys1 `subType` FunTy a2 ntys2 = a2 `subFunTyArg` a1 && allR (allR subType) ntys1 ntys2
-
-subFunTyArg :: FunTyArg -> FunTyArg -> Bool
-BoxTy         `subFunTyArg` BoxTy         = True
-BoxTy         `subFunTyArg` _             = False
-_             `subFunTyArg` BoxTy         = False
-NonBoxTy tys1 `subFunTyArg` NonBoxTy tys2 = allR subType tys1 tys2
-
-allR :: (a -> b -> Bool) -> [a] -> [b] -> Bool
-allR f = go
-  where go []     []             = True
-        go (x:xs) (y:ys) | f x y = go xs ys
-        go _      _              = False
 
 
 data Id = Id {
@@ -81,7 +38,6 @@ instance Ord CoId where compare = compare `on` getUnique
 data Trivial = IdOcc Id
              | Literal Literal
              | PrimOp PrimOp
-             | Pun Trivial
              | Update [CoType] CoType [CoType]
              deriving (Show)
 -- FIXME: add "blackhole"/"update-with-bh" primop (useful if moving update out of a thunk itself statically, as well as at runtime)
@@ -108,20 +64,17 @@ data Continuation = Continuation [Id] Term
 data Term = Term [(Id, Function)] [(CoId, Continuation)] Transfer
           deriving (Show)
 
+data CallArgs = Unbox | Enter [Trivial]
+              deriving (Show)
+
 data Transfer = Return CoId [Trivial]
-              | Call Trivial [Trivial] [CoId]
+              | Call Trivial CallArgs [CoId]
               deriving (Show)
 
 instance Pretty Type where
-    pPrintPrec level prec ty = case ty of
+    pPrint ty = case ty of
       IntHashTy    -> text "Int#"
       PtrTy        -> text "*"
-      FunTy a ntys -> prettyParen (prec >= appPrec) $ pPrintPrec level appPrec a <+> text "->" <+> pPrintPrecAlty level noPrec [PrettyFunction $ \level prec -> pPrintPrecMulti level prec nty | nty <- ntys]
-
-instance Pretty FunTyArg where
-    pPrintPrec level prec a = case a of
-      BoxTy         -> text "<!>"
-      NonBoxTy tys  -> pPrintPrecMulti level prec tys
 
 instance Pretty Id where
     pPrintPrec level prec = pPrintPrec level prec . idName
@@ -134,7 +87,6 @@ instance Pretty Trivial where
       IdOcc x               -> pPrintPrec level prec x
       Literal l             -> pPrintPrec level prec l
       PrimOp pop            -> pPrintPrec level prec pop
-      Pun t                 -> pPrintPrec level prec t
       Update ntys1 nt ntys2 -> pPrintPrecFunny level prec (text "Update") ntys1 nt ntys2
 
 instance Pretty Function where
@@ -148,10 +100,15 @@ instance Pretty Continuation where
 instance Pretty Term where
     pPrintPrec level prec (Term xfs uks r) = pPrintPrecLetRec level prec ([(asPrettyFunction x, asPrettyFunction f) | (x, f) <- xfs] ++ [(asPrettyFunction u, asPrettyFunction k) | (u, k) <- uks]) r
 
+instance Pretty CallArgs where
+    pPrintPrec level prec a = case a of
+      Unbox    -> text "<!>"
+      Enter ts -> pPrintPrecMulti level prec ts
+
 instance Pretty Transfer where
     pPrintPrec level prec r = case r of
-      Return u ts -> pPrintPrecApps level prec u ts
-      Call t ts us -> pPrintPrecApps level prec t [PrettyFunction $ \level prec -> pPrintPrecMulti level prec ts, PrettyFunction $ \level prec -> pPrintPrecMulti level prec us]
+      Return u ts   -> pPrintPrecApps level prec u ts
+      Call t cas us -> pPrintPrecApps level prec t [asPrettyFunction cas, PrettyFunction $ \level prec -> pPrintPrecMulti level prec us]
 
 pPrintPrecFunny :: (Pretty a, Pretty b, Pretty c, Pretty d) => PrettyLevel -> Rational -> a -> [[b]] -> [c] -> [[d]] -> Doc
 pPrintPrecFunny level prec hd ntys1 ts ntys2 = pPrintPrecApps level prec hd [PrettyFunction $ \level prec -> pPrintPrecAlty level prec $ [PrettyFunction $ \level prec -> pPrintPrecMulti level prec nty | nty <- ntys1] ++
@@ -220,8 +177,8 @@ lintFunction x_tys x f = do
               Box _ ts _ -> mapM_ (lintTrivial x_tys) ts
     warnM [hang (pPrint x <+> text "RHS type incompatible") 2
             (text "Bound as:" <+> pPrint (idType x) $$
-             text "RHS is:" <+> pPrint (functionType f))
-          | not (functionType f `subType` idType x)]
+             text "RHS is:" <+> pPrint PtrTy)
+          | idType x /= PtrTy]
 
 lintContinuation :: UniqueMap Type -> UniqueMap CoType -> CoId -> Continuation -> LintM ()
 lintContinuation x_tys u_ntys u k@(Continuation xs e) = do
@@ -230,7 +187,7 @@ lintContinuation x_tys u_ntys u k@(Continuation xs e) = do
     warnM [hang (pPrint u <+> text "RHS cotype incompatible") 2
             (text "Bound as:" <+> pPrint (coIdType u) $$
              text "RHS is:" <+> pPrint (continuationCoType k))
-          | not (allR subType (coIdType u) (continuationCoType k))]
+          | coIdType u /= continuationCoType k]
 
 lintTransfer :: UniqueMap Type -> UniqueMap CoType -> Transfer -> LintM ()
 lintTransfer x_tys u_ntys (Return u ts) = do
@@ -239,31 +196,21 @@ lintTransfer x_tys u_ntys (Return u ts) = do
     warnM [hang (pPrint u <+> text "return type incompatible:") 2
             (text "Applied:" <+> pPrint ts <+> text "::" <+> pPrint (map trivialType ts) $$
              text "Expected:" <+> pPrint (coIdType u))
-          | not (allR subType (map trivialType ts) (coIdType u))]
-lintTransfer x_tys u_ntys (Call t ts us) = do
+          | map trivialType ts /= coIdType u]
+lintTransfer x_tys u_ntys (Call t ca us) = do
     lintTrivial x_tys t
-    mapM_ (lintTrivial x_tys) ts
+    case ca of Enter ts -> mapM_ (lintTrivial x_tys) ts
+               Unbox    -> return ()
     mapM_ (lintCoId u_ntys) us
-    ntys <- case trivialType t of
-      FunTy BoxTy          ntys -> do
-        warnM [pPrint t <+> text "unpack call with non-null value arguments" | not (null ts)]
-        return ntys
-      FunTy (NonBoxTy tys) ntys -> do
-        warnM [hang (pPrint t <+> text "call arguments incompatible:") 2
-                (text "Applied:" <+> pPrint ts <+> text "::" <+> pPrint (map trivialType ts) $$
-                 text "Expected:" <+> pPrint tys)
-              | not (allR subType (map trivialType ts) tys)]
-        return ntys
-    warnM [hang (pPrint t <+> text "call result incompatible:") 2
-            (text "Applied:" <+> pPrint us <+> text "::" <+> pPrint (map coIdType us) $$
-             text "Expected:" <+> pPrint ntys)
-          | not (allR (allR subType) (map coIdType us) ntys)]
+    warnM [hang (text "Function of unexpected type:") 2
+            (text "Saw:" <+> pPrint t <+> text "::" <+> pPrint (trivialType t) $$
+             text "Expected:" <+> pPrint PtrTy)
+          | trivialType t /= PtrTy]
 
 lintTrivial :: UniqueMap Type -> Trivial -> LintM ()
 lintTrivial x_tys (IdOcc x) = case lookupUniqueMap x x_tys of
     Nothing   -> warnM [pPrint x <+> text "out of scope"]
     Just x_ty -> warnM [pPrint x <+> text "occurrence type not up to date" | x_ty /= idType x]
-lintTrivial x_tys (Pun t) = lintTrivial x_tys t
 lintTrivial _ (Literal _)    = return ()
 lintTrivial _ (PrimOp _)     = return ()
 lintTrivial _ (Update _ _ _) = return ()
@@ -277,24 +224,11 @@ lintCoId u_ntys u = case lookupUniqueMap u u_ntys of
 literalType :: Literal -> Type
 literalType (Int _) = IntHashTy
 
-primOpType :: PrimOp -> Type
-primOpType pop
-  | pop `elem` [Add, Subtract, Multiply, Divide, Modulo]
-  = mkNonBoxTy [IntHashTy, IntHashTy] [[IntHashTy]]
-  | pop `elem` [Equal, LessThan, LessThanEqual]
-  = mkNonBoxTy [IntHashTy, IntHashTy] [[boolTy]] -- FIXME: it might be caller if primops return "unboxed bools" so we could use them in e.g. literal-case desugarings + optimize the boxing away?
-
 trivialType :: Trivial -> Type
-trivialType (IdOcc x)               = idType x
-trivialType (Literal l)             = literalType l
-trivialType (PrimOp pop)            = primOpType pop
-trivialType (Pun t)                 = mkNonBoxTy [] [[trivialType t]] -- NB: Pun cannot be more general than this because there is no room to store which continuation to return down
-trivialType (Update ntys1 nt ntys2) = mkNonBoxTy (thunk_ty:nt) [nt]   -- NB: this is generalised to update thunks with more than one continuation or continuations with more than one argument
-  where thunk_ty = mkNonBoxTy [] (ntys1 ++ [nt] ++ ntys2)
-
-functionType :: Function -> Type
-functionType (Function xs us _)   = mkNonBoxTy (map idType xs) (map coIdType us)
-functionType (Box ntys1 ts ntys2) = mkBoxTy (ntys1 ++ [map trivialType ts] ++ ntys2)
+trivialType (IdOcc x)      = idType x
+trivialType (Literal l)    = literalType l
+trivialType (PrimOp _)     = PtrTy
+trivialType (Update _ _ _) = PtrTy
 
 continuationCoType :: Continuation -> CoType
 continuationCoType (Continuation xs _) = map idType xs
@@ -376,7 +310,6 @@ renameTrivial :: IdSubst -> Trivial -> Trivial
 renameTrivial idsubst (IdOcc x)               = renameId idsubst x
 renameTrivial _       (Literal x)             = Literal x
 renameTrivial _       (PrimOp pop)            = PrimOp pop
-renameTrivial idsubst (Pun t)                 = Pun (renameTrivial idsubst t)
 renameTrivial _       (Update ntys1 nt ntys2) = Update ntys1 nt ntys2
 
 
@@ -399,9 +332,13 @@ renameTerm iss0 subst0 (Term xfs uks r) = Term (xs' `zip` map (renameFunction is
         (iss1, subst1, xs') = renameBinders renameIdBinder   iss0 subst0 xs
         (iss2, subst2, us') = renameBinders renameCoIdBinder iss1 subst1 us
 
+renameCallArgs :: IdSubst -> CallArgs -> CallArgs
+renameCallArgs idsubst (Enter ts) = Enter (map (renameTrivial idsubst) ts)
+renameCallArgs _       Unbox      = Unbox
+
 renameTransfer :: Subst -> Transfer -> Transfer
 renameTransfer subst (Return u ts)  = Return (renameCoId (coIdSubst subst) u) (map (renameTrivial (idSubst subst)) ts)
-renameTransfer subst (Call t ts us) = Call (renameTrivial (idSubst subst) t) (map (renameTrivial (idSubst subst)) ts) (map (renameCoId (coIdSubst subst)) us)
+renameTransfer subst (Call t ca us) = Call (renameTrivial (idSubst subst) t) (renameCallArgs (idSubst subst) ca) (map (renameCoId (coIdSubst subst)) us)
 
 
 trivialFreeIds :: Trivial -> S.Set Id
@@ -409,7 +346,6 @@ trivialFreeIds (IdOcc x)      = S.singleton x
 trivialFreeIds (Literal _)    = S.empty
 trivialFreeIds (PrimOp _)     = S.empty
 trivialFreeIds (Update _ _ _) = S.empty
-trivialFreeIds (Pun t)        = trivialFreeIds t
 
 
 type Heap = M.Map Id (IdSubst, Function)
@@ -455,19 +391,25 @@ stateToTerm (iss, h, (subst, e), k) = flip (foldr (\(x, (idsubst, f)) -> addFunc
 step :: State -> Maybe State
 step (iss0, h, (subst0, Term xfs uks r), k) = case renameTransfer subst2 r of
     Return u' ts'   -> return_step (iss2, h', (u', ts'), k')
-    Call t' ts' us' -> case t' of
+    Call t' ca' us' -> case t' of
       IdOcc x' -> do
         (idsubst, f) <- M.lookup x' h'
         case f of Function ys vs e
+                    | Enter ts' <- ca'
                     -> return (iss2, h', (insertRenamings insertIdRenaming ys ts' (insertRenamings insertCoIdRenaming vs us' (substFromIdSubst idsubst)), e), k')
                   Box  tys ss _
-                    | [] <- ts'
+                    | Unbox <- ca'
                     , Just u' <- us' `at` length tys
                     -> return_step (iss2, h', (u', map (renameTrivial idsubst) ss), k')
-                    | otherwise
-                    -> error "step: untypeable call to IdOcc?"
-      Update ntys1 _ ntys2 | (IdOcc x':ts_update') <- ts', [u'] <- us' -> -- NB: updating anything other than IdOcc is impossible (Pun is the only type-correct one, but such a thing is guaranteed to be updated, and with self-update we won't encounter that) (FIXME: can be cleaner?)
-        return_step (iss2, M.insert x' (mkIdSubst (S.unions (map trivialFreeIds ts_update')), Box ntys1 ts_update' ntys2) h', (u', ts_update'), k')
+                    | Enter [] <- ca'
+                    , [u'] <- us'
+                    -> return_step (iss2, h', (u', [t']), k')
+                  _ -> error "step: untypeable call to IdOcc?"
+      Update ntys1 _ ntys2
+        | Enter ts' <- ca'
+        , (IdOcc x':ts_update') <- ts'
+        , [u'] <- us' -> -- NB: updating anything other than IdOcc is impossible (FIXME: can be cleaner?)
+          return_step (iss2, M.insert x' (mkIdSubst (S.unions (map trivialFreeIds ts_update')), Box ntys1 ts_update' ntys2) h', (u', ts_update'), k')
         -- NB: we *can* do update-in-place for thunks in general, but do we want to?
         -- In the common case where (length ts_update' == 1) and the thing updated with is a box, it is unambiguously good:
         -- any extra heap allocation can be eliminated by the GC when it collapses indirections (using punning). But if we do
@@ -475,10 +417,11 @@ step (iss0, h, (subst0, Term xfs uks r), k) = case renameTransfer subst2 r of
         --
         -- One thing is clear: the compiler must be very careful when it introduces one of these boxes. Perhaps it should only
         -- do so when it is clear that the thunk will not in fact be updated (think about CPR).
-      PrimOp pop | Just t' <- stepPrimOp pop ts', [u'] <- us' ->
-        return_step (iss2, h', (u', [t']), k')
-      Pun t' | [] <- ts', [u'] <- us' -> -- FIXME: this means that Puns could be a primop, right?
-        return_step (iss2, h', (u', [t']), k')
+      PrimOp pop
+        | Enter ts' <- ca'
+        , Just t' <- stepPrimOp pop ts'
+        , [u'] <- us' ->
+          return_step (iss2, h', (u', [t']), k')
       _ -> error "step: untypeable call to non-IdOcc?"
   where
     (xs, fs) = unzip xfs

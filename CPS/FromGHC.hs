@@ -26,13 +26,13 @@ import Utilities
 fromType :: G.Type -> [Type]
 fromType (G.ForAllTy _ ty) = fromType ty
 fromType ty = case G.splitTyConAppTy_maybe ty of
-    Just (tc, [ty1, ty2])
-      | tc == G.funTyCon             -> [mkNonBoxTy (fromTypeThunky ty1) [fromType ty2]] -- NB: this does not actually permit unboxed tuples on the left, the list is needed for void args
+    Just (tc, [_, _])
+      | tc == G.funTyCon             -> [PtrTy]
       | Just _ <- G.isEqHashTyCon tc -> []
-      | tc == G.pairTyCon            -> [mkBoxTy [[fromLiftedTypeThunky ty1, fromLiftedTypeThunky ty2]]]
+      | tc == G.pairTyCon            -> [PtrTy]
     Just (tc, [])
-      | tc == G.boolTyCon    -> [boolTy]
-      | tc == G.intTyCon     -> [intTy]
+      | tc == G.boolTyCon    -> [PtrTy]
+      | tc == G.intTyCon     -> [PtrTy]
       | tc == G.intHashTyCon -> [IntHashTy]
     Just (tc, tys)
       | Just n <- G.isUnboxedTupleTyCon_maybe tc
@@ -64,7 +64,7 @@ fromLiftedTypeThunky ty = case fromTypeThunky ty of
 fromTypeThunky :: G.Type -> [Type]
 fromTypeThunky ty
   | G.typeKind ty /= G.LiftedTypeKind = fromType ty
-  | otherwise                         = [mkNonBoxTy [] [fromType ty]]
+  | otherwise                         = [PtrTy]
 
 -- We don't have to worry about occurrences of unboxed tuple Ids, but void Ids may occur
 fromId :: G.Id -> [Id]
@@ -149,12 +149,12 @@ bindKont (Known tys f) ids0 nested = addContinuation u k (nested ids2 u) -- FIXM
 fromTerm :: Context -> In G.Term -> Kont -> Term
 fromTerm ids (subst, G.Var x) u
   | G.typeKind (G.idType x) /= G.LiftedTypeKind = returnToKont u ids (maybeToList (rename subst x))
-  | otherwise                                   = bindKont u ids $ \_ u -> Term [] [] (Call (renameLifted subst x) [] [u])
+  | otherwise                                   = bindKont u ids $ \_ u -> Term [] [] (Call (renameLifted subst x) (Enter []) [u])
 fromTerm ids0 (subst, G.Value v) u = case v of
     G.Coercion _ -> returnToKont u ids0 []
     G.Lambda (G.ATyVar _) e -> fromTerm ids0 (subst, e) u
     G.Lambda (G.AnId x) e -> addFunction y f (returnToKont u ids1 [IdOcc y])
-     where (ids1, y) = freshId ids0 "fun" (functionType f) -- NB: knot tied, but functionType isn't strict in the Term of the Function
+     where (ids1, y) = freshId ids0 "fun" PtrTy
            (ids2, subst', mb_x') = renameIdBinder ids1 subst x
            (ids3, w) = freshCoId ids2 "w" (fromType (G.termType e))
            f = Function (maybeToList mb_x') [w] (fromTerm ids3 (subst', e) (Unknown w))
@@ -166,12 +166,12 @@ fromTerm ids0 (subst, G.Value v) u = case v of
       where dcs = G.dataConFamily dc
             ListPoint tys_lefts _tys_here tys_rights = fmap (concatMap fromTypeThunky . G.dataConFields) $ locateListPoint (==dc) dcs
             f = Box tys_lefts (mapMaybe (rename subst) xs) tys_rights
-            (ids1, y) = freshId ids0 "data" (functionType f)
+            (ids1, y) = freshId ids0 "data" PtrTy
     G.Literal l -> returnToKont u ids0 [Literal l]
-fromTerm ids (subst, G.App e x) u = fromTerm ids (subst, e) $ Known (fromType (G.termType e)) $ \ids [t] -> bindKont u ids $ \_ u -> Term [] [] (Call t (maybeToList (rename subst x)) [u])
+fromTerm ids (subst, G.App e x) u = fromTerm ids (subst, e) $ Known (fromType (G.termType e)) $ \ids [t] -> bindKont u ids $ \_ u -> Term [] [] (Call t (Enter (maybeToList (rename subst x))) [u])
 fromTerm ids (subst, G.TyApp e _) u = fromTerm ids (subst, e) u
 fromTerm ids (subst, G.PrimOp pop es) u = foldr (\e known ids ts -> fromTerm ids (subst, e) $ Known (fromType (G.termType e)) $ \ids extra_ts -> known ids (ts ++ extra_ts))
-                                                (\ids ts -> bindKont u ids $ \_ u -> Term [] [] (Call (PrimOp pop) ts [u])) es ids []
+                                                (\ids ts -> bindKont u ids $ \_ u -> Term [] [] (Call (PrimOp pop) (Enter ts) [u])) es ids []
 fromTerm ids0 (subst, G.Case e _ x alts) u
   | [(G.DataAlt dc _ xs, e_alt)] <- alts
   , Just _ <- G.isUnboxedTupleTyCon_maybe (G.dataConTyCon dc)
@@ -184,7 +184,7 @@ fromTerm ids0 (subst, G.Case e _ x alts) u
   = fromTerm ids0 (subst, e) $ Known (fromType (G.idType x)) $ \ids0 ts -> fromTerm ids0 (foldr (uncurry insertUniqueMap) subst (combine xs ts), e_alt) u
     
   | otherwise
-  = fromTerm ids0 (subst, e) $ Known (fromType (G.idType x)) $ \ids0 ts -> let subst' = insertUniqueMap x (if G.typeKind (G.idType x) /= G.LiftedTypeKind then listToMaybe ts else Just (Pun (case ts of [t] -> t))) subst in case alts of
+  = fromTerm ids0 (subst, e) $ Known (fromType (G.idType x)) $ \ids0 ts -> let subst' = insertUniqueMap x (if G.typeKind (G.idType x) /= G.LiftedTypeKind then listToMaybe ts else Just (case ts of [t] -> t)) subst in case alts of
       [(G.DefaultAlt, e)]                                             -> fromTerm ids0 (subst', e) u
       ((G.DefaultAlt, e_def):(G.DataAlt dc _ xs, e):alts) | [t] <- ts -> fromAlts (selectData t)    ids0 subst' (Just e_def) ((dc, (xs, e)):[(dc, (xs, e)) | (G.DataAlt dc _ xs, e) <- alts]) u
       ((G.DataAlt dc _ xs, e):alts)                       | [t] <- ts -> fromAlts (selectData t)    ids0 subst' Nothing      ((dc, (xs, e)):[(dc, (xs, e)) | (G.DataAlt dc _ xs, e) <- alts]) u
@@ -194,7 +194,7 @@ fromTerm ids0 (subst0, G.LetRec xes e) u = e'
   where (ids3, subst2, e') = foldr (\(x, e) (ids1, subst0, e') -> let (ids2, subst1, Just x') = renameIdBinder ids1 subst0 x
                                                                       ty = fromLiftedType (G.termType e)
                                                                       (ids3, w) = freshCoId ids2 "w" [ty]
-                                                                  in (ids2, subst1, addFunction x' (Function [] [w] (fromTerm ids3 (subst2, e) (Known [ty] $ \_ [t] -> Term [] [] (Call (Update [] (coIdType w) []) [IdOcc x', t] [w])))) e'))
+                                                                  in (ids2, subst1, addFunction x' (Function [] [w] (fromTerm ids3 (subst2, e) (Known [ty] $ \_ [t] -> Term [] [] (Call (Update [] (coIdType w) []) (Enter [IdOcc x', t]) [w])))) e'))
                                    (ids0, subst0, fromTerm ids3 (subst2, e) u) xes
 fromTerm ids (subst, G.Cast e _) u = fromTerm ids (subst, e) u
  -- FIXME: I'm a bit worried about the type-precision consequences of this -- dropping casts may kill typeability of the output!
@@ -231,7 +231,7 @@ fromTerm ids (subst, G.Cast e _) u = fromTerm ids (subst, e) u
  -- their RHSs, since we can iterate this forever and build infinite arbitrarily large types.
 
 selectData :: Trivial -> CoId -> [(G.DataCon, CoId)] -> Term
-selectData t u_def dcs_us = Term [] [] (Call t [] [lookup dc dcs_us `orElse` u_def | dc <- dc_family])
+selectData t u_def dcs_us = Term [] [] (Call t Unbox [lookup dc dcs_us `orElse` u_def | dc <- dc_family])
   where dc_family = G.dataConFamily (fst (head dcs_us))
 
 selectLiteral :: Trivial -> CoId -> [(Literal, CoId)] -> Term

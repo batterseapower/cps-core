@@ -1,7 +1,7 @@
 {-# LANGUAGE PatternGuards #-}
 module CPS.FromGHC where
 
-import CPS.Syntax2 hiding (Subst, renameIdBinder)
+import CPS.Syntax hiding (Subst, renameIdBinder)
 
 import qualified GHC.Data as G
 import qualified GHC.Var as G

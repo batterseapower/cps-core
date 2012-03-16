@@ -50,10 +50,24 @@ dataExample = G.Case (G.Value (G.Literal (Int 1))) intHashTy one [(G.DefaultAlt,
     x = G.Id { G.idName = x_n, G.idType = G.intHashTy }
     y = G.Id { G.idName = y_n, G.idType = G.boolTy }
 
+caseBoundFunctionExample :: G.Term
+caseBoundFunctionExample = G.Case (G.Value (G.Lambda (G.ATyVar a) (G.Value (G.Lambda (G.AnId x) (G.Var x))))) intTy lifted_id [(G.DefaultAlt,
+                             G.Case (G.Value (G.Literal (Int 1))) intTy one [(G.DefaultAlt,
+                               G.LetRec [(boxed_one, G.Value (G.Data G.iHashDataCon [] [] [one]))] $
+                               G.Var lifted_id `G.TyApp` intTy `G.App` boxed_one)])]
+  where
+    [a_n, one_n, boxed_one_n, lifted_id_n, x_n] = shadowyNames ["a", "one", "boxed_one", "lifted_id", "x"]
+    a = G.TyVar { G.tyVarName = a_n, G.tyVarKind = G.LiftedTypeKind }
+    one = G.Id { G.idName = one_n, G.idType = G.intHashTy }
+    boxed_one = G.Id { G.idName = boxed_one_n, G.idType = G.intTy }
+    lifted_id = G.Id { G.idName = lifted_id_n, G.idType = G.ForAllTy a (G.TyVarTy a `G.mkFunTy` G.TyVarTy a) }
+    x = G.Id { G.idName = x_n, G.idType = G.TyVarTy a }
+
 
 the_example :: G.Term
 --the_example = functionExample
-the_example = dataExample
+--the_example = dataExample
+the_example = caseBoundFunctionExample
 
 
 main :: IO ()

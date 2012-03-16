@@ -79,7 +79,7 @@ instance Pretty Term where
         Cast e co       -> pPrintPrecCast level prec e co
 
 pPrintPrecCase :: (Pretty a, Pretty b, Pretty c, Pretty d) => PrettyLevel -> Rational -> a -> d -> [(b, c)] -> Doc
-pPrintPrecCase level prec e x alts = prettyParen (prec > noPrec) $ hang (text "case" <+> pPrintPrec level noPrec e <> text "@" <> pPrintPrec level noPrec x <+> text "of") 2 $ vcat (map (pPrintPrecAlt level noPrec) alts)
+pPrintPrecCase level prec e x alts = prettyParen (prec > noPrec) $ hang (text "case" <+> pPrintPrec level appPrec e <> text "@" <> pPrintPrec level noPrec x <+> text "of") 2 $ vcat (map (pPrintPrecAlt level noPrec) alts)
 
 pPrintPrecAlt :: (Pretty a, Pretty b) => PrettyLevel -> Rational -> (a, b) -> Doc
 pPrintPrecAlt level _ (alt_con, alt_e) = hang (pPrintPrec level noPrec alt_con <+> text "->") 2 (pPrintPrec level noPrec alt_e)

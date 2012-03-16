@@ -290,10 +290,10 @@ renameBinders rename = curry ((unnest .) . mapAccumL (\(ids, subst) -> nest . re
         nest (a, b, c) = ((a, b), c)
 
 renameId :: IdSubst -> Id -> Trivial
-renameId idsubst x = findUniqueWithDefault (error "renameId: out of scope") x (unIdSubst idsubst)
+renameId idsubst x = findUniqueWithDefault (error $ "renameId: " ++ pPrintRender x ++ " out of scope") x (unIdSubst idsubst)
 
 renameCoId :: CoIdSubst -> CoId -> CoId
-renameCoId coidsubst u = findUniqueWithDefault (error "renameCoId: out of scope") u (unCoIdSubst coidsubst)
+renameCoId coidsubst u = findUniqueWithDefault (error $ "renameId: " ++ pPrintRender u ++ " out of scope") u (unCoIdSubst coidsubst)
 
 insertIdRenaming :: Id -> Trivial -> Subst -> Subst
 insertIdRenaming x t' subst = subst { idSubst = IdSubst (insertUniqueMap x t' (unIdSubst (idSubst subst))) }
@@ -301,9 +301,10 @@ insertIdRenaming x t' subst = subst { idSubst = IdSubst (insertUniqueMap x t' (u
 insertCoIdRenaming :: CoId -> CoId -> Subst -> Subst
 insertCoIdRenaming u u' subst = subst { coIdSubst = CoIdSubst (insertUniqueMap u u' (unCoIdSubst (coIdSubst subst))) }
 
-insertRenamings :: (a -> b -> Subst -> Subst)
+insertRenamings :: (Pretty a, Pretty b)
+                => (a -> b -> Subst -> Subst)
                 -> [a] -> [b] -> Subst -> Subst
-insertRenamings insert xs ys subst = foldl' (\subst (x, y) -> insert x y subst) subst (xs `zip` ys)
+insertRenamings insert xs ys subst = foldl' (\subst (x, y) -> insert x y subst) subst (expectJust ("insertRenamings: " ++ pPrintRender (xs, ys)) (xs `zipEqual` ys))
 
 
 renameTrivial :: IdSubst -> Trivial -> Trivial
@@ -405,11 +406,17 @@ step (iss0, h, (subst0, Term xfs uks r), k) = case renameTransfer subst2 r of
                     , [u'] <- us'
                     -> return_step (iss2, h', (u', [t']), k')
                   _ -> error "step: untypeable call to IdOcc?"
-      Update ntys1 _ ntys2
+      Update ntys1 nty ntys2
         | Enter ts' <- ca'
         , (IdOcc x':ts_update') <- ts'
-        , [u'] <- us' -> -- NB: updating anything other than IdOcc is impossible (FIXME: can be cleaner?)
-          return_step (iss2, M.insert x' (mkIdSubst (S.unions (map trivialFreeIds ts_update')), Box ntys1 ts_update' ntys2) h', (u', ts_update'), k')
+        , [u'] <- us'
+        , let one iss nty = case uniqAway iss (getUnique x') of (iss, u) -> (iss, CoId { coIdName = Name { nameString = "k", nameUnique = u }, coIdType = nty })
+              (iss3, vs'1) = mapAccumL one iss2 ntys1
+              (iss4, v')   = one iss3 nty
+              (_,    vs'2) = mapAccumL one iss4 ntys2
+              vs' = vs'1 ++ [v'] ++ vs'2
+        -> -- NB: updating anything other than IdOcc is impossible (FIXME: can be cleaner?)
+          return_step (iss2, M.insert x' (mkIdSubst (S.unions (map trivialFreeIds ts_update')), {- Box ntys1 ts_update' ntys2 -} Function [] vs' (Term [] [] (Return v' ts_update'))) h', (u', ts_update'), k')
         -- NB: we *can* do update-in-place for thunks in general, but do we want to?
         -- In the common case where (length ts_update' == 1) and the thing updated with is a box, it is unambiguously good:
         -- any extra heap allocation can be eliminated by the GC when it collapses indirections (using punning). But if we do
